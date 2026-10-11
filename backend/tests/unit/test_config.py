@@ -58,3 +58,17 @@ def test_log_level_is_case_insensitive_and_validated() -> None:
     assert _settings(log_level="debug").log_level == "DEBUG"
     with pytest.raises(ValidationError):
         _settings(log_level="verbose")
+
+
+def test_measurement_limits_have_safe_defaults_and_validate() -> None:
+    settings = _settings()
+    assert settings.earliest_measurement_timestamp.isoformat() == "2020-01-01T00:00:00+00:00"
+    assert settings.rejection_retention_days == 30
+    assert settings.rejection_rows_per_sensor_per_minute == 60
+    parsed = _settings(earliest_measurement_timestamp="2024-05-01T00:00:00Z")
+    assert parsed.earliest_measurement_timestamp.year == 2024
+    for bad in ({"rejection_retention_days": 0}, {"rejection_rows_per_sensor_per_minute": 0}):
+        with pytest.raises(ValidationError):
+            _settings(**bad)
+    with pytest.raises(ValidationError):
+        _settings(earliest_measurement_timestamp="2024-05-01T00:00:00")  # no offset
