@@ -54,7 +54,7 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "SIM", "C4", "RUF", "PT"]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests"]
+files = ["app", "tests", "alembic"]
 
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
