@@ -21,6 +21,10 @@ RUN uv sync --frozen --no-install-project
 
 # Local development: dev dependencies, source is bind-mounted, auto-reload.
 FROM base AS dev
+# The bind-mounted source may not be writable by uid 10001 (Linux hosts): keep tool caches in /tmp.
+ENV RUFF_CACHE_DIR=/tmp/ruff_cache \
+    MYPY_CACHE_DIR=/tmp/mypy_cache \
+    PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest_cache"
 COPY --from=deps-dev /opt/venv /opt/venv
 USER app
 CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload"]
