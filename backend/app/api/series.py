@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, Response
 
+from app.core.audit import audit
 from app.core.problems import ProblemError
 from app.db import SessionDep
 from app.models import Series
@@ -39,8 +40,8 @@ def _duplicate() -> ProblemError:
 def _range_conflict(exc: service.RangeConflict) -> ProblemError:
     return ProblemError(
         409,
-        f"The new range excludes stored measurements, which span {exc.data_min:g} to "
-        f"{exc.data_max:g}. Widen the range or delete the series.",
+        f"The new range excludes stored measurements, which span {exc.data_min:.10g} to "
+        f"{exc.data_max:.10g}. Widen the range or delete the series.",
         type_="urn:zai:problem:range-conflict",
         extensions={"dataMin": exc.data_min, "dataMax": exc.data_max},
     )
@@ -57,7 +58,7 @@ async def list_series(session: SessionDep) -> list[SeriesOut]:
 
 @router.post("", status_code=201)
 async def create_series(
-    body: SeriesInput, _admin: AdminDep, session: SessionDep, response: Response
+    body: SeriesInput, admin: AdminDep, session: SessionDep, response: Response
 ) -> SeriesOut:
     try:
         series = await service.create_series(session, _data(body))
@@ -65,6 +66,7 @@ async def create_series(
         raise _invalid_range() from None
     except service.DuplicateName:
         raise _duplicate() from None
+    audit("series.created", admin.user_id, seriesId=series.id, name=series.name)
     response.headers["Location"] = f"/api/series/{series.id}"
     return _out(series)
 
@@ -95,11 +97,12 @@ async def get_series_stats(series_id: PathId, session: SessionDep) -> SeriesStat
 
 @router.put("/{series_id}")
 async def update_series(
-    series_id: PathId, body: SeriesInput, _admin: AdminDep, session: SessionDep
+    series_id: PathId, body: SeriesInput, admin: AdminDep, session: SessionDep
 ) -> SeriesOut:
-    # Order: 401 (AdminDep) -> 400 (body) -> 404 -> 422 (range) -> 409 (stored data, name).
+    # Order: 401 (AdminDep) -> 404 (bad path id) -> 400 (body) -> 404 (no such series)
+    #        -> 422 (range) -> 409 (stored data, name). See plan §5.2.
     try:
-        return _out(await service.update_series(session, series_id, _data(body)))
+        series = await service.update_series(session, series_id, _data(body))
     except service.SeriesNotFound:
         raise _not_found() from None
     except service.InvalidRange:
@@ -108,12 +111,15 @@ async def update_series(
         raise _range_conflict(exc) from None
     except service.DuplicateName:
         raise _duplicate() from None
+    audit("series.updated", admin.user_id, seriesId=series.id, name=series.name)
+    return _out(series)
 
 
 @router.delete("/{series_id}", status_code=204, response_class=Response)
-async def delete_series(series_id: PathId, _admin: AdminDep, session: SessionDep) -> Response:
+async def delete_series(series_id: PathId, admin: AdminDep, session: SessionDep) -> Response:
     try:
         await service.delete_series(session, series_id)
     except service.SeriesNotFound:
         raise _not_found() from None
+    audit("series.deleted", admin.user_id, seriesId=series_id)
     return Response(status_code=204)

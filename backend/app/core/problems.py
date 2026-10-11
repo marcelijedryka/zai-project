@@ -19,19 +19,34 @@ _LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
 MAX_VALIDATION_ERRORS = 50  # a huge invalid array must not amplify into a huge response
 
 
+def _route_patterns(app: Any) -> list[tuple[re.Pattern[str], frozenset[str]]]:
+    """Compiled path patterns with their methods, built once from the OpenAPI schema."""
+    cached: list[tuple[re.Pattern[str], frozenset[str]]] | None = getattr(
+        app.state, "route_patterns", None
+    )
+    if cached is None:
+        cached = [
+            (
+                re.compile(re.sub(r"\{[^}/]+\}", "[^/]+", template)),
+                frozenset(method.upper() for method in operations),
+            )
+            for template, operations in app.openapi().get("paths", {}).items()
+        ]
+        app.state.route_patterns = cached
+    return cached
+
+
 def allowed_methods(request: Request) -> str | None:
-    """Every method the app supports for the request path, for the ``Allow`` header.
+    """Every method the app serves for the request path, for the ``Allow`` header.
 
     Starlette's own header lists only the first partially matching route, which is misleading
     when a path has several (``GET``/``PUT``/``DELETE`` on ``/api/series/{id}``). The OpenAPI
-    schema (cached by FastAPI) lists them all.
+    schema lists them all. HEAD is deliberately not advertised: FastAPI routes do not serve it.
     """
     methods: set[str] = set()
-    for template, operations in request.app.openapi().get("paths", {}).items():
-        if re.fullmatch(re.sub(r"\{[^}/]+\}", "[^/]+", template), request.url.path):
-            methods |= {m.upper() for m in operations}
-    if "GET" in methods:
-        methods.add("HEAD")
+    for pattern, route_methods in _route_patterns(request.app):
+        if pattern.fullmatch(request.url.path):
+            methods |= route_methods
     return ", ".join(sorted(methods)) or None
 
 

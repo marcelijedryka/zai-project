@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -13,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import Settings
+from tests.conftest import Admin
 
 T0 = datetime(2026, 1, 10, 10, 0, tzinfo=UTC)
 T1 = datetime(2026, 1, 10, 11, 0, tzinfo=UTC)
@@ -247,9 +249,24 @@ async def test_wrong_methods_are_405(client: httpx.AsyncClient, auth: dict[str, 
     created = await create(client, auth)
     response = await client.patch(f"/api/series/{created['id']}", json={}, headers=auth)
     assert response.status_code == 405
-    assert response.headers["allow"] == "DELETE, GET, HEAD, PUT"
+    assert response.headers["allow"] == "DELETE, GET, PUT"
     collection = await client.delete("/api/series", headers=auth)
-    assert (collection.status_code, collection.headers["allow"]) == (405, "GET, HEAD, POST")
+    assert (collection.status_code, collection.headers["allow"]) == (405, "GET, POST")
+
+
+async def test_every_method_in_allow_is_served_and_others_are_405(
+    client: httpx.AsyncClient, auth: dict[str, str]
+) -> None:
+    """``Allow`` must not promise methods the route refuses (HEAD used to be advertised)."""
+    created = await create(client, auth)
+    for path in ("/api/series", f"/api/series/{created['id']}"):
+        allow = (await client.patch(path, json={})).headers["allow"].split(", ")
+        for method in allow:
+            response = await client.request(method, path, json={} if method != "GET" else None)
+            assert response.status_code != 405, (method, path)
+        for method in ("HEAD", "PATCH"):
+            assert method not in allow
+            assert (await client.request(method, path)).status_code == 405, (method, path)
 
 
 # --- update ------------------------------------------------------------------------
@@ -484,3 +501,49 @@ async def test_series_changes_are_announced_on_commit(
         ("deleted", created["id"]),
     ]
     assert all(e["event"] == "series-changed" for e in received)
+
+
+async def test_a_bad_path_id_wins_over_an_invalid_body_but_not_over_authentication(
+    client: httpx.AsyncClient, auth: dict[str, str]
+) -> None:
+    """Documented order: 401, then 404 for an id that cannot exist, then 400 for the body."""
+    assert (await client.put("/api/series/abc", json={"x": 1})).status_code == 401
+    assert (await client.put("/api/series/abc", json={"x": 1}, headers=auth)).status_code == 404
+    assert (await client.put("/api/series/999999", json={"x": 1}, headers=auth)).status_code == 400
+
+
+async def test_the_409_message_keeps_the_precision_of_large_values(
+    client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    created = await create(client, auth, minValue=0, maxValue=10_000_000)
+    await add_measurement(engine, created["id"], 1234567.0, T0)
+    response = await client.put(
+        f"/api/series/{created['id']}", json=body(minValue=0, maxValue=100), headers=auth
+    )
+    assert response.status_code == 409
+    assert "1234567" in response.json()["detail"]
+    assert "e+" not in response.json()["detail"]
+    assert response.json()["dataMax"] == 1234567.0
+
+
+async def test_successful_admin_changes_are_audited_and_rejected_ones_are_not(
+    client: httpx.AsyncClient,
+    auth: dict[str, str],
+    admin: Admin,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="zai.audit"):
+        created = await create(client, auth, name="Audited")
+        await client.put(f"/api/series/{created['id']}", json=body(name="Audited v2"), headers=auth)
+        await client.post("/api/series", json=body(minValue=5, maxValue=1), headers=auth)  # 422
+        await client.put("/api/series/999999", json=body(), headers=auth)  # 404
+        await client.delete(f"/api/series/{created['id']}", headers=auth)
+        await client.delete(f"/api/series/{created['id']}", headers=auth)  # 404
+    records = [r for r in caplog.records if r.name == "zai.audit"]
+    assert [r.getMessage() for r in records] == [
+        "series.created",
+        "series.updated",
+        "series.deleted",
+    ]
+    assert all(r.fields["adminId"] == admin.id for r in records)  # type: ignore[attr-defined]
+    assert all(r.fields["seriesId"] == created["id"] for r in records)  # type: ignore[attr-defined]
