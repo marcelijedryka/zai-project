@@ -29,7 +29,11 @@ def _token_from(request: Request) -> tuple[str | None, bool]:
 
 
 def _check_origin(request: Request) -> None:
-    """CSRF defence in depth: state-changing cookie requests must come from our own origin."""
+    """CSRF defence in depth: state-changing cookie requests must come from a trusted origin.
+
+    "Trusted" is exactly ``CORS_ALLOWED_ORIGINS``: with credentialed CORS an allow-listed origin
+    can already send unsafe requests, so the two lists are deliberately the same.
+    """
     allowed: list[str] = request.app.state.settings.cors_allowed_origins
     if request.headers.get("origin") not in allowed:
         raise ProblemError(403, "Cross-origin request rejected.")
@@ -52,5 +56,11 @@ def get_login_throttle(request: Request) -> LoginThrottle:
     return throttle
 
 
+def get_ip_throttle(request: Request) -> LoginThrottle:
+    throttle: LoginThrottle = request.app.state.ip_throttle
+    return throttle
+
+
 AdminDep = Annotated[auth.AdminIdentity, Depends(require_admin)]
 ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
+IpThrottleDep = Annotated[LoginThrottle, Depends(get_ip_throttle)]

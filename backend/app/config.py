@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     environment: Literal["dev", "test", "prod"] = "dev"
     # Comma-separated in the environment; explicit allow-list, never "*" (credentials are on).
+    # These origins are also the only ones trusted for cookie-authenticated unsafe requests.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     error_log_file: Path | None = None

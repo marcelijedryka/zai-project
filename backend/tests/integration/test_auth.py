@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.security import passwords
-from app.security.rate_limit import LoginThrottle
+from app.security.rate_limit import LoginThrottle, ip_throttle_key
 from app.security.tokens import COOKIE_NAME, hash_token
 from app.services import auth, users
 from tests.conftest import ADMIN_PASSWORD, Admin
@@ -477,3 +477,118 @@ async def test_background_task_purges_expired_sessions(
     finally:
         task.cancel()
     assert await session_count(engine) == 0
+
+
+# --- throttle under concurrency, per-IP limit, bounded hashing ---------------------------
+
+
+async def test_a_burst_of_parallel_wrong_logins_cannot_exceed_the_failure_limit(
+    client: httpx.AsyncClient, admin: Admin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    reached = 0
+    real = auth.authenticate
+
+    async def spy(*args: Any, **kwargs: Any) -> Any:
+        nonlocal reached
+        reached += 1
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(auth, "authenticate", spy)
+    body = {"username": admin.username, "password": "wrong-password"}
+    responses = await asyncio.gather(
+        *[client.post("/api/auth/login", json=body) for _ in range(30)]
+    )
+    codes = [r.status_code for r in responses]
+    assert reached == 10  # only max_failures guesses were ever verified
+    assert codes.count(401) == 10
+    assert codes.count(429) == 20
+    assert all("retry-after" in r.headers for r in responses if r.status_code == 429)
+
+
+async def test_a_burst_of_parallel_wrong_current_passwords_is_limited_too(
+    client: httpx.AsyncClient, admin: Admin
+) -> None:
+    import asyncio
+
+    token = await login(client, admin)
+    wrong = password_body(current="not my password")
+    responses = await asyncio.gather(
+        *[client.put("/api/auth/password", json=wrong, headers=bearer(token)) for _ in range(30)]
+    )
+    codes = [r.status_code for r in responses]
+    assert (codes.count(403), codes.count(429)) == (10, 20)
+
+
+async def test_varying_the_username_still_hits_the_per_client_limit(
+    client: httpx.AsyncClient, admin: Admin
+) -> None:
+    codes = []
+    for i in range(35):
+        r = await client.post(
+            "/api/auth/login", json={"username": f"guess{i}", "password": "wrong-password"}
+        )
+        codes.append(r.status_code)
+    assert codes[:30] == [401] * 30
+    assert codes[30:] == [429] * 5
+    assert (
+        await client.post(
+            "/api/auth/login", json={"username": admin.username, "password": admin.password}
+        )
+    ).status_code == 429  # the whole client is locked, whatever the username
+
+
+async def test_a_successful_login_does_not_consume_the_client_budget(
+    app: FastAPI, client: httpx.AsyncClient, admin: Admin
+) -> None:
+    for i in range(5):
+        await client.post("/api/auth/login", json={"username": f"guess{i}", "password": "x" * 10})
+    await login(client, admin)
+    key = ip_throttle_key("127.0.0.1")
+    assert len(app.state.ip_throttle._failures[key]) == 5  # the success gave its slot back
+    assert f"{key}:{admin.username}" not in app.state.login_throttle._failures
+
+
+async def test_password_hashing_concurrency_and_queue_are_bounded(
+    app: FastAPI, client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+    import threading
+    import time
+
+    running = peak = 0
+    lock = threading.Lock()
+
+    def slow_verify(password_hash: str, password: str) -> bool:
+        nonlocal running, peak
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        time.sleep(0.1)
+        with lock:
+            running -= 1
+        return False
+
+    monkeypatch.setattr(passwords, "verify_password_sync", slow_verify)
+    monkeypatch.setattr(passwords, "HASH_MAX_PENDING", 4)
+    responses = await asyncio.gather(
+        *[
+            client.post("/api/auth/login", json={"username": f"user{i}", "password": "x" * 10})
+            for i in range(14)
+        ]
+    )
+    codes = [r.status_code for r in responses]
+    assert set(codes) == {401, 503}
+    assert codes.count(503) >= 1
+    assert peak <= passwords.HASH_WORKERS
+    busy = next(r for r in responses if r.status_code == 503)
+    assert busy.headers["content-type"].startswith("application/problem+json")
+    assert busy.headers["retry-after"] == "1"
+    # Refused attempts were not wrong guesses, so they do not count against the client.
+    key = ip_throttle_key("127.0.0.1")
+    assert len(app.state.ip_throttle._failures[key]) == codes.count(401)
+
+
+async def test_the_dummy_hash_is_warmed_up_at_startup(app: FastAPI) -> None:
+    assert passwords.dummy_hash.cache_info().currsize == 1

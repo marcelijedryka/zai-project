@@ -26,6 +26,7 @@ from app.core.problems import (
     validation_exception_handler,
 )
 from app.db import create_engine, create_session_factory
+from app.security.passwords import HashingBusy, warm_up
 from app.security.rate_limit import LoginThrottle
 from app.tasks import purge_expired_sessions_forever
 
@@ -38,7 +39,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(settings.database_url)
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
-        app.state.login_throttle = LoginThrottle()
+        app.state.login_throttle = LoginThrottle()  # per (client, username)
+        app.state.ip_throttle = LoginThrottle(max_failures=30)  # per client, any username
+        await warm_up()
         purge_task = asyncio.create_task(purge_expired_sessions_forever(app.state.session_factory))
         try:
             yield
@@ -62,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(ProblemError, problem_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
+    app.add_exception_handler(HashingBusy, auth.hashing_busy_handler)
 
     # Added innermost-first: the last one added is the outermost layer.
     app.add_middleware(NegotiationMiddleware)

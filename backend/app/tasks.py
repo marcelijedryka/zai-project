@@ -12,6 +12,8 @@ logger = logging.getLogger("zai.tasks")
 PURGE_INTERVAL_SECONDS = 60 * 60
 
 
+# Housekeeping only: expired sessions never authenticate (``find_session`` filters on
+# ``expires_at``), so the first run may wait a full interval; ``purge-sessions`` runs it on demand.
 async def purge_expired_sessions_forever(
     factory: async_sessionmaker[AsyncSession], interval: float = PURGE_INTERVAL_SECONDS
 ) -> None:

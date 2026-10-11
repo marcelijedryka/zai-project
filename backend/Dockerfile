@@ -29,6 +29,9 @@ COPY --from=deps-dev /opt/venv /opt/venv
 USER app
 CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
 
+# Behind the reverse proxy set FORWARDED_ALLOW_IPS to the proxy network only (never "*" while
+# the port is published): it decides whose X-Forwarded-For is trusted, hence the client IP used
+# for login throttling and the sessions table.
 # Production: runtime dependencies only, source baked in, non-root.
 FROM base AS runtime
 COPY --from=deps-prod /opt/venv /opt/venv

@@ -27,8 +27,10 @@ migrate: dev ## Apply Alembic migrations
 	@test -f backend/alembic.ini || { echo "Alembic is not set up yet (Phase 1)"; exit 1; }
 	$(COMPOSE) exec api alembic upgrade head
 
-create-admin: dev ## Create the admin account (hidden password prompt): make create-admin USERNAME=admin
-	$(COMPOSE) exec api python -m app.cli create-admin --username $${USERNAME:-admin}
+create-admin: dev ## Create the admin (hidden prompt): make create-admin ADMIN_USERNAME=admin
+	@# Scripted use: ZAI_ADMIN_PASSWORD=... plus `docker compose exec -T` (no TTY); the password
+	@# is then visible in the process environment, so prefer the prompt on shared machines.
+	$(COMPOSE) exec api python -m app.cli create-admin --username "$${ADMIN_USERNAME:-admin}"
 
 schema-sql: ## Regenerate db/schema.sql (offline Alembic); the old file is kept on failure
 	@test -f backend/alembic.ini || { echo "Alembic is not set up yet (Phase 1)"; exit 1; }
