@@ -6,7 +6,7 @@ from app.core.problems import ProblemError, problem_response
 from app.db import SessionDep
 from app.schemas.auth import LoginRequest, LoginResponse, Me, PasswordChange
 from app.security.deps import BEARER_CHALLENGE, AdminDep, IpThrottleDep, ThrottleDep
-from app.security.rate_limit import ip_throttle_key
+from app.security.rate_limit import ip_throttle_key, password_change_key
 from app.security.tokens import COOKIE_NAME, SESSION_TTL_SECONDS
 from app.services import auth
 
@@ -61,6 +61,9 @@ async def login(
         raise ProblemError(401, "Invalid username or password.", headers=BEARER_CHALLENGE)
     ip_throttle.release(ip_key)
     throttle.reset(user_key)
+    # Knowing the password is exactly what the password-change throttle protects, so a successful
+    # login clears it (a thief holding only a session token cannot do this).
+    throttle.reset(password_change_key(user.id))
     token = await auth.create_session(session, user, ip, request.headers.get("user-agent"))
     response.set_cookie(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, **COOKIE_FLAGS)  # type: ignore[arg-type]
     return LoginResponse(access_token=token, expires_in=SESSION_TTL_SECONDS)
@@ -79,7 +82,7 @@ async def change_password(
     body: PasswordChange, admin: AdminDep, session: SessionDep, throttle: ThrottleDep
 ) -> Response:
     # Order: 401 (AdminDep) -> 400 (body) -> 403 (wrong current) -> 422 (new password rules).
-    key = f"password:{admin.user_id}"
+    key = password_change_key(admin.user_id)
     if (wait := throttle.acquire(key)) is not None:  # reserved before the slow check, see login
         raise _too_many(wait)
     try:

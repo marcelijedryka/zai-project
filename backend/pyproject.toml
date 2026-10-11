@@ -51,12 +51,14 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "SIM", "C4", "RUF", "PT"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]
+# The ported official tests keep the script's compound assertions (`expect(a && b)`).
+"tests/contract/**" = ["PT018"]
 
 [tool.mypy]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["app", "tests", "alembic"]
+files = ["app", "tests", "alembic", "scripts"]
 
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
