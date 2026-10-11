@@ -44,3 +44,4 @@ logs/
 # Test-suite output
 raporty/
 wyniki.csv
+db/schema.sql.tmp
