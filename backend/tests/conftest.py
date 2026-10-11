@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 
 import httpx
 import pytest
@@ -8,7 +8,7 @@ from sqlalchemy.pool import NullPool
 
 from app.config import Settings
 from app.main import create_app
-from tests.db_utils import migrate, recreate_database
+from tests.db_utils import drop_database, migrate, recreate_database
 
 TABLES = "users, sessions, series, sensors, measurements, measurement_rejections"
 
@@ -25,6 +25,24 @@ def test_settings(base_settings: Settings) -> Settings:
     settings = recreate_database(base_settings, f"{base_settings.postgres_db}_test")
     migrate(settings)
     return settings
+
+
+def _scratch_database(base_settings: Settings, suffix: str) -> Iterator[Settings]:
+    settings = recreate_database(base_settings, f"{base_settings.postgres_db}_{suffix}")
+    yield settings
+    drop_database(base_settings, settings.postgres_db)
+
+
+@pytest.fixture
+def migrations_db(base_settings: Settings) -> Iterator[Settings]:
+    """An empty, throw-away database for migration tests; dropped afterwards."""
+    yield from _scratch_database(base_settings, "migrations")
+
+
+@pytest.fixture
+def models_db(base_settings: Settings) -> Iterator[Settings]:
+    """An empty, throw-away database for a schema built straight from the ORM models."""
+    yield from _scratch_database(base_settings, "models")
 
 
 @pytest.fixture

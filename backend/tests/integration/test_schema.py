@@ -82,6 +82,8 @@ async def test_expected_indexes_exist(engine: AsyncEngine) -> None:
     assert {
         "ix_measurements_series_id_ts",
         "ix_measurements_id",
+        "ix_measurements_sensor_id",
+        "ix_measurement_rejections_sensor_id",
         "uq_series_name_lower",
         "uq_sensors_key_hash_active",
         "ix_sensors_series_id",

@@ -101,6 +101,8 @@ CREATE INDEX ix_measurements_series_id_ts ON measurements (series_id, ts);
 
 CREATE INDEX ix_measurements_id ON measurements (id);
 
+CREATE INDEX ix_measurements_sensor_id ON measurements (sensor_id);
+
 UPDATE alembic_version SET version_num='0002' WHERE alembic_version.version_num = '0001';
 
 -- Running upgrade 0002 -> 0003
@@ -120,6 +122,8 @@ CREATE TABLE measurement_rejections (
 );
 
 CREATE INDEX ix_measurement_rejections_series_id ON measurement_rejections (series_id);
+
+CREATE INDEX ix_measurement_rejections_sensor_id ON measurement_rejections (sensor_id);
 
 CREATE INDEX ix_measurement_rejections_created_at ON measurement_rejections (created_at DESC);
 

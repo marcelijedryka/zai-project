@@ -9,17 +9,10 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 from app.config import get_settings
-from app.models import Base
+from app.models import Base, include_object
 
 config = context.config
 target_metadata = Base.metadata
-
-# Objects created by TimescaleDB itself, not described by our models.
-TIMESCALE_INDEXES = {"measurements_ts_idx"}
-
-
-def include_object(obj: object, name: str | None, type_: str, *_: object) -> bool:
-    return not (type_ == "index" and name in TIMESCALE_INDEXES)
 
 
 def run_migrations_offline() -> None:
@@ -30,6 +23,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_object=include_object,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -37,7 +31,10 @@ def run_migrations_offline() -> None:
 
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
-        connection=connection, target_metadata=target_metadata, include_object=include_object
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+        compare_server_default=True,
     )
     with context.begin_transaction():
         context.run_migrations()

@@ -47,6 +47,7 @@ def upgrade() -> None:
         ),
     )
     op.create_index("ix_measurement_rejections_series_id", "measurement_rejections", ["series_id"])
+    op.create_index("ix_measurement_rejections_sensor_id", "measurement_rejections", ["sensor_id"])
     op.create_index(
         "ix_measurement_rejections_created_at",
         "measurement_rejections",

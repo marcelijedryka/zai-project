@@ -49,6 +49,7 @@ def upgrade() -> None:
     op.execute("SELECT create_hypertable('measurements', by_range('ts', INTERVAL '7 days'))")
     op.create_index("ix_measurements_series_id_ts", "measurements", ["series_id", "ts"])
     op.create_index("ix_measurements_id", "measurements", ["id"])
+    op.create_index("ix_measurements_sensor_id", "measurements", ["sensor_id"])
 
 
 def downgrade() -> None:

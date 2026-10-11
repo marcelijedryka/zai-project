@@ -33,6 +33,14 @@ NAMING_CONVENTION = {
 NON_FINITE = "('NaN'::float8, 'Infinity'::float8, '-Infinity'::float8)"
 HEX64 = "^[0-9a-f]{64}$"
 
+# Created by TimescaleDB itself (``<table>_<time column>_idx``), not described by our models.
+TIMESCALE_MANAGED_INDEXES = {"measurements_ts_idx"}
+
+
+def include_object(obj: object, name: str | None, type_: str, *_: object) -> bool:
+    """Alembic ``include_object`` hook shared by ``alembic/env.py`` and the drift tests."""
+    return not (type_ == "index" and name in TIMESCALE_MANAGED_INDEXES)
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
@@ -87,6 +95,7 @@ class Series(Base):
     unit: Mapped[str | None] = mapped_column(String(20))
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = _now()
+    # Refreshed by the ORM ``onupdate`` hook only: Core/raw-SQL updates must set it explicitly.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -115,13 +124,19 @@ class Sensor(Base):
 
 
 class Measurement(Base):
-    """TimescaleDB hypertable on ``ts`` (7-day chunks); the PK must include ``ts``."""
+    """TimescaleDB hypertable on ``ts`` (7-day chunks); the PK must include ``ts``.
+
+    A hypertable cannot have a unique index on ``id`` alone, so ``id`` is unique only because
+    it comes from one sequence and only the API inserts rows. Never insert explicit ids.
+    """
 
     __tablename__ = "measurements"
     __table_args__ = (
         CheckConstraint(f"value NOT IN {NON_FINITE}", name="value_finite"),
         Index("ix_measurements_series_id_ts", "series_id", "ts"),
         Index("ix_measurements_id", "id"),
+        # Without it every sensor delete (ON DELETE SET NULL) scans the whole hypertable.
+        Index("ix_measurements_sensor_id", "sensor_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -141,7 +156,9 @@ class MeasurementRejection(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     series_id: Mapped[int] = mapped_column(ForeignKey("series.id", ondelete="CASCADE"), index=True)
-    sensor_id: Mapped[int | None] = mapped_column(ForeignKey("sensors.id", ondelete="SET NULL"))
+    sensor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sensors.id", ondelete="SET NULL"), index=True
+    )
     value: Mapped[float] = mapped_column(Float(53))
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     reason: Mapped[str] = mapped_column(String(32))
