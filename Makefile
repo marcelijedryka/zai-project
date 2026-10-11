@@ -37,8 +37,8 @@ schema-sql: ## Regenerate db/schema.sql (offline Alembic); the old file is kept 
 	cd backend && uv run alembic upgrade head --sql > ../db/schema.sql.tmp
 	mv db/schema.sql.tmp db/schema.sql
 
-seed: ## Populate sample data through the API (needs the generator, Phase 2)
-	@echo "Generator not implemented yet (Phase 2)"; exit 1
+seed: ## TEMPORARY sample data via the API (ZAI_ADMIN_PASSWORD=... make seed); Phase 2: zai-sensor
+	cd backend && uv run python -m scripts.seed_temp --api-url "$${ZAI_API_URL:-http://localhost:8000}"
 
 contract-test: ## Official suite, E1 stage: ADMIN_PASSWORD=... make contract-test
 	@test -n "$$ADMIN_PASSWORD" || { echo "Set ADMIN_PASSWORD in the environment"; exit 1; }
