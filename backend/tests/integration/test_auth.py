@@ -592,3 +592,35 @@ async def test_password_hashing_concurrency_and_queue_are_bounded(
 
 async def test_the_dummy_hash_is_warmed_up_at_startup(app: FastAPI) -> None:
     assert passwords.dummy_hash.cache_info().currsize == 1
+
+
+async def test_a_successful_login_clears_the_password_change_throttle(
+    client: httpx.AsyncClient, admin: Admin
+) -> None:
+    """Repeated runs of the official script (one wrong current password each) must not lock it."""
+    token = await login(client, admin)
+    wrong = password_body(current="not my password")
+
+    async def attempt(bearer_token: str) -> int:
+        response = await client.put("/api/auth/password", json=wrong, headers=bearer(bearer_token))
+        return response.status_code
+
+    assert [await attempt(token) for _ in range(10)] == [403] * 10
+    assert await attempt(token) == 429
+    fresh = await login(client, admin)  # proves knowledge of the password
+    assert await attempt(fresh) == 403
+    assert await attempt(token) == 403
+
+
+async def test_a_failed_login_does_not_clear_the_password_change_throttle(
+    client: httpx.AsyncClient, admin: Admin
+) -> None:
+    token = await login(client, admin)
+    wrong = password_body(current="not my password")
+    for _ in range(10):
+        await client.put("/api/auth/password", json=wrong, headers=bearer(token))
+    await client.post(
+        "/api/auth/login", json={"username": admin.username, "password": "wrong-password"}
+    )
+    response = await client.put("/api/auth/password", json=wrong, headers=bearer(token))
+    assert response.status_code == 429

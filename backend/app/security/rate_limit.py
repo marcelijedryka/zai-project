@@ -16,6 +16,11 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 
 
+def password_change_key(user_id: int) -> str:
+    """Throttle key for wrong current-password attempts on ``PUT /api/auth/password``."""
+    return f"password:{user_id}"
+
+
 def ip_throttle_key(ip: str | None) -> str:
     """Normalise a client address for throttling: IPv6 clients share their whole /64."""
     try:

@@ -30,10 +30,12 @@ class Settings(BaseSettings):
     # Comma-separated in the environment; explicit allow-list, never "*" (credentials are on).
     # These origins are also the only ones trusted for cookie-authenticated unsafe requests.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
-    # Measurements older than this are refused. A floor (not a rolling window) because the official
-    # tests use fixed past dates; it bounds the number of 7-day Timescale chunks (about 52 a year)
-    # that queries over all of them must lock, and an unbounded past could exhaust the lock table.
-    earliest_measurement_timestamp: AwareDatetime = datetime(2020, 1, 1, tzinfo=UTC)
+    # The contract allows past timestamps; this is the one deliberate limit on that. Older
+    # measurements are refused with 422. It is a floor (not a rolling window) because the official
+    # tests use fixed past dates, and it bounds the 7-day Timescale chunks (about 52 a year) that
+    # a query over all data must lock: measured, 1,370 scattered chunks still work (an unfiltered
+    # listing takes ~0.5 s), 2,900 broke `count(*)` with "out of shared memory".
+    earliest_measurement_timestamp: AwareDatetime = datetime(2000, 1, 1, tzinfo=UTC)
     # Rejected measurements are kept for the admin error-log view, then purged hourly. A faulty
     # sensor can only add this many rows per minute (the rest is still refused and logged).
     rejection_retention_days: int = Field(default=30, ge=1)

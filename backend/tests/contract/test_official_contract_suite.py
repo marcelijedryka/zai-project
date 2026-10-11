@@ -7,6 +7,7 @@ map is updated. Three checks need the deployed HTTPS/CloudFront setup and are li
 ``DEPLOY_ONLY`` with the reason; they are covered by the production run (Phase 3).
 """
 
+import hashlib
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -21,6 +22,9 @@ from scripts.seed_temp import seed_sample_data
 from tests.conftest import Admin
 
 OFFICIAL_SCRIPT = Path(__file__).resolve().parents[3] / "contract" / "zai-tests.mjs"
+# SHA-256 of the official script this module was ported from. If the lecturer publishes a revised
+# script (same names, changed assertions, dates or limits), the ports below must be re-checked.
+OFFICIAL_SCRIPT_SHA256 = "9e0effcb6a460bb7f03af1a4a35cd56d270c979660ea8a63f40b3983df2f48bf"
 T0 = "2026-01-10T10:00:00Z"
 T1 = "2026-01-10T11:00:00Z"
 T2 = "2026-01-10T12:00:00Z"
@@ -652,15 +656,29 @@ async def test_bezpieczenstwo_08_error_bodies_have_no_stack_traces(
 # === the map itself ==========================================================================
 
 
+_TEST_CALL = re.compile(r"^test\(\s*(['\"`])(\w+)\1\s*,\s*(['\"`])(.*?)\3\s*,", re.M)
+
+
 def official_tests() -> list[tuple[str, str]]:
     source = OFFICIAL_SCRIPT.read_text(encoding="utf-8")
-    return re.findall(r"^test\('(\w+)',\s*'([^']*)'", source, flags=re.M)
+    parsed = [(m.group(2), m.group(4)) for m in _TEST_CALL.finditer(source)]
+    # Every test(...) call must be understood: a quoting style the parser misses would
+    # otherwise let a new official test slip through unmapped.
+    assert len(parsed) == len(re.findall(r"^test\(", source, flags=re.M)), "unparsed test() call"
+    return parsed
 
 
-def test_the_official_script_is_present_and_unchanged_in_size() -> None:
+def test_the_official_script_is_the_version_that_was_ported() -> None:
+    digest = hashlib.sha256(OFFICIAL_SCRIPT.read_bytes()).hexdigest()
+    assert digest == OFFICIAL_SCRIPT_SHA256, (
+        "contract/zai-tests.mjs changed: re-port the changed tests in this module "
+        "(same requests, same assertions), then update OFFICIAL_SCRIPT_SHA256"
+    )
+
+
+def test_the_official_script_has_the_planned_groups_and_test_count() -> None:
     names = official_tests()
-    groups = {group for group, _ in names}
-    assert groups == {"kontrakt", "walidacja", "bezpieczenstwo"}
+    assert {group for group, _ in names} == {"kontrakt", "walidacja", "bezpieczenstwo"}
     assert len(names) == 23 + 14 + 8  # plan §13
 
 

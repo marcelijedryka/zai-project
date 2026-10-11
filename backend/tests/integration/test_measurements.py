@@ -231,7 +231,7 @@ async def test_range_is_checked_before_the_timestamp_and_recorded_once(
 @pytest.mark.parametrize(
     "stamp",
     [
-        "2019-12-31T23:59:59Z",
+        "1999-12-31T23:59:59Z",
         "1970-01-01T00:00:00Z",
         "0001-01-01T00:00:00+14:00",
         "0001-01-01T00:00:00Z",
@@ -250,12 +250,12 @@ async def test_timestamps_before_the_earliest_allowed_are_422_without_crashing(
     assert response.status_code == 422
     problem = response.json()
     assert problem["type"] == "urn:zai:problem:timestamp-too-old"
-    assert "2020-01-01T00:00:00Z" in problem["detail"]
+    assert "2000-01-01T00:00:00Z" in problem["detail"]
     assert await count(engine, "measurements") == 0
     assert await count(engine, "measurement_rejections") == 0  # not a value problem: not recorded
     record = next(r for r in caplog.records if r.getMessage() == "measurement.rejected")
     assert record.fields["reason"] == "timestamp_too_old"  # type: ignore[attr-defined]
-    edge = await send(client, sensor["apiKey"], value=1, timestamp="2020-01-01T00:00:00Z")
+    edge = await send(client, sensor["apiKey"], value=1, timestamp="2000-01-01T00:00:00Z")
     assert edge.status_code == 201  # the floor itself is allowed
 
 
@@ -264,7 +264,7 @@ async def test_the_floor_bounds_how_many_chunks_a_sensor_can_create(
 ) -> None:
     """Scattered ancient timestamps used to create ~2,900 chunks and break queries over them."""
     _, sensor = await setup(client, auth)
-    for stamp in ("1970-01-01T00:00:00Z", "1985-06-15T12:00:00Z", "2005-03-03T03:03:03Z"):
+    for stamp in ("1970-01-01T00:00:00Z", "1985-06-15T12:00:00Z", "1999-03-03T03:03:03Z"):
         assert (await send(client, sensor["apiKey"], value=1, timestamp=stamp)).status_code == 422
     async with engine.connect() as conn:
         chunks: int = (
