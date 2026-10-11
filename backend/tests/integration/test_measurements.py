@@ -896,15 +896,18 @@ async def test_one_clock_is_used_for_receipt_and_last_seen(
     client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
 ) -> None:
     _, sensor = await setup(client, auth)
+    before = datetime.now(UTC)
     await send(client, sensor["apiKey"], value=1, timestamp=T0)
+    after = datetime.now(UTC)
     async with engine.connect() as conn:
         row = (
             await conn.execute(
                 text(
-                    "SELECT m.received_at = s.last_measurement_at AS same, "
-                    "abs(extract(epoch FROM now() - m.received_at)) < 10 AS recent "
+                    "SELECT m.received_at, s.last_measurement_at "
                     "FROM measurements m JOIN sensors s ON s.id = m.sensor_id"
                 )
             )
         ).one()
-    assert (row.same, row.recent) == (True, True)
+    assert row.received_at == row.last_measurement_at  # the same instant, not two clock reads
+    # Compared with the host clock only: the database VM's clock may drift (e.g. after sleep).
+    assert before <= row.received_at <= after
