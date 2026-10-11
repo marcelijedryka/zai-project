@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --frozen
+        working-directory: backend
+      - run: uv run ruff check .
+        working-directory: backend
+      - run: uv run ruff format --check .
+        working-directory: backend
+      - run: uv run mypy
+        working-directory: backend
+
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: timescale/timescaledb:2.30.1-pg17
+        env:
+          POSTGRES_USER: zai
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: zai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zai -d zai"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://zai:ci-only-password@localhost:5432/zai
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --frozen
+        working-directory: backend
+      - run: uv run pytest --cov
+        working-directory: backend
