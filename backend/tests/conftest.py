@@ -1,16 +1,32 @@
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.config import Settings
 from app.main import create_app
+from app.security import passwords
+from app.services import users
 from tests.db_utils import drop_database, migrate, recreate_database
 
 TABLES = "users, sessions, series, sensors, measurements, measurement_rejections"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "correct horse battery staple"
+
+
+@pytest.fixture(autouse=True)
+def _cheap_password_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Argon2 with production parameters costs ~100 ms per call; tests use a cheap profile.
+
+    ``tests/unit/test_passwords.py`` pins the production parameters separately.
+    """
+    monkeypatch.setattr(passwords, "_hasher", passwords.make_hasher(1, 8 * 1024, 1))
+    passwords.dummy_hash.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -60,10 +76,30 @@ async def engine(settings: Settings) -> AsyncIterator[AsyncEngine]:
 
 
 @pytest.fixture
-async def client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+async def app(settings: Settings, engine: AsyncEngine) -> AsyncIterator[FastAPI]:
+    """The application with its lifespan running; ``engine`` truncates the tables afterwards."""
     app = create_app(settings)
-    async with (
-        app.router.lifespan_context(app),
-        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c,
-    ):
+    async with app.router.lifespan_context(app):
+        yield app
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
         yield c
+
+
+@dataclass(frozen=True)
+class Admin:
+    id: int
+    username: str
+    password: str
+
+
+@pytest.fixture
+async def admin(app: FastAPI) -> Admin:
+    async with app.state.session_factory() as session:
+        user = await users.create_user(session, ADMIN_USERNAME, ADMIN_PASSWORD)
+        return Admin(id=user.id, username=user.username, password=ADMIN_PASSWORD)
