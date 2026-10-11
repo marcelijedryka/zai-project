@@ -27,7 +27,7 @@ ENV RUFF_CACHE_DIR=/tmp/ruff_cache \
     PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest_cache"
 COPY --from=deps-dev /opt/venv /opt/venv
 USER app
-CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload", "--no-access-log"]
 
 # Production: runtime dependencies only, source baked in, non-root.
 FROM base AS runtime
@@ -37,4 +37,4 @@ COPY alembic ./alembic
 COPY app ./app
 USER app
 EXPOSE 8000
-CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
+CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-server-header", "--no-access-log"]

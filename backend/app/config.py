@@ -2,10 +2,10 @@
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
 # Repo-root .env for host-side runs (uvicorn, pytest, alembic); in containers the
@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     environment: Literal["dev", "test", "prod"] = "dev"
+    # Comma-separated in the environment; explicit allow-list, never "*" (credentials are on).
+    cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
+    log_level: str = "INFO"
+    error_log_file: Path | None = None
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def _split_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [origin.strip() for origin in value.split(",") if origin.strip()]
+        return value
 
     @property
     def database_url(self) -> URL:
