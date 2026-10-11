@@ -10,10 +10,13 @@ from typing import Any
 import asyncpg
 import httpx
 import pytest
-from sqlalchemy import text
+from fastapi import FastAPI
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.config import Settings
+from app.security.rate_limit import LoginThrottle
+from app.services import measurements as measurement_service
 
 T0 = "2026-01-10T10:00:00Z"
 T1 = "2026-01-10T11:00:00Z"
@@ -227,9 +230,14 @@ async def test_range_is_checked_before_the_timestamp_and_recorded_once(
 
 @pytest.mark.parametrize(
     "stamp",
-    ["1969-12-31T23:59:59Z", "0001-01-01T00:00:00+14:00", "0001-01-01T00:00:00Z"],
+    [
+        "2019-12-31T23:59:59Z",
+        "1970-01-01T00:00:00Z",
+        "0001-01-01T00:00:00+14:00",
+        "0001-01-01T00:00:00Z",
+    ],
 )
-async def test_absurdly_old_timestamps_are_422_without_crashing(
+async def test_timestamps_before_the_earliest_allowed_are_422_without_crashing(
     client: httpx.AsyncClient,
     auth: dict[str, str],
     engine: AsyncEngine,
@@ -240,11 +248,48 @@ async def test_absurdly_old_timestamps_are_422_without_crashing(
     with caplog.at_level(logging.WARNING):
         response = await send(client, sensor["apiKey"], value=1, timestamp=stamp)
     assert response.status_code == 422
-    assert response.json()["type"] == "urn:zai:problem:timestamp-too-old"
+    problem = response.json()
+    assert problem["type"] == "urn:zai:problem:timestamp-too-old"
+    assert "2020-01-01T00:00:00Z" in problem["detail"]
     assert await count(engine, "measurements") == 0
-    assert any(r.getMessage() == "measurement.rejected" for r in caplog.records)
-    epoch = await send(client, sensor["apiKey"], value=1, timestamp="1970-01-01T00:00:00Z")
-    assert epoch.status_code == 201  # the floor itself is allowed
+    assert await count(engine, "measurement_rejections") == 0  # not a value problem: not recorded
+    record = next(r for r in caplog.records if r.getMessage() == "measurement.rejected")
+    assert record.fields["reason"] == "timestamp_too_old"  # type: ignore[attr-defined]
+    edge = await send(client, sensor["apiKey"], value=1, timestamp="2020-01-01T00:00:00Z")
+    assert edge.status_code == 201  # the floor itself is allowed
+
+
+async def test_the_floor_bounds_how_many_chunks_a_sensor_can_create(
+    client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    """Scattered ancient timestamps used to create ~2,900 chunks and break queries over them."""
+    _, sensor = await setup(client, auth)
+    for stamp in ("1970-01-01T00:00:00Z", "1985-06-15T12:00:00Z", "2005-03-03T03:03:03Z"):
+        assert (await send(client, sensor["apiKey"], value=1, timestamp=stamp)).status_code == 422
+    async with engine.connect() as conn:
+        chunks: int = (
+            await conn.execute(
+                text(
+                    "SELECT count(*) FROM timescaledb_information.chunks "
+                    "WHERE hypertable_name = 'measurements'"
+                )
+            )
+        ).scalar_one()
+    assert chunks == 0
+
+
+async def test_the_earliest_timestamp_is_configurable(
+    app: FastAPI, client: httpx.AsyncClient, auth: dict[str, str]
+) -> None:
+    _, sensor = await setup(client, auth)
+    stamp = "2024-06-01T00:00:00Z"
+    assert (await send(client, sensor["apiKey"], value=1, timestamp=stamp)).status_code == 201
+    app.state.settings = app.state.settings.model_copy(
+        update={"earliest_measurement_timestamp": datetime(2025, 1, 1, tzinfo=UTC)}
+    )
+    response = await send(client, sensor["apiKey"], value=1, timestamp=stamp)
+    assert response.status_code == 422
+    assert "2025-01-01T00:00:00Z" in response.json()["detail"]
 
 
 async def test_timestamps_near_year_9999_do_not_overflow(
@@ -762,3 +807,104 @@ async def test_stats_and_the_range_check_see_ingested_data(
     )
     assert shrink.status_code == 409
     assert (shrink.json()["dataMin"], shrink.json()["dataMax"]) == (1, 3)
+
+
+# --- review follow-ups: count, rejection flood control, retention, clocks ------------------------
+
+
+async def test_a_page_that_is_not_full_skips_the_count_query(
+    app: FastAPI, client: httpx.AsyncClient, auth: dict[str, str]
+) -> None:
+    series_id, _, _ = await seed(client, auth, [T0, T1, T2])
+    statements: list[str] = []
+
+    def record(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement.lower())
+
+    event.listen(app.state.engine.sync_engine, "before_cursor_execute", record)
+    try:
+        small = await client.get(f"/api/measurements?series={series_id}")  # 3 rows, limit 1000
+        counts_small = [s for s in statements if "count(" in s]
+        statements.clear()
+        full = await client.get(f"/api/measurements?series={series_id}&limit=2")  # page is full
+        counts_full = [s for s in statements if "count(" in s]
+        exact = await client.get(f"/api/measurements?series={series_id}&limit=3")  # full, == total
+    finally:
+        event.remove(app.state.engine.sync_engine, "before_cursor_execute", record)
+    assert (len(small.json()), small.headers["x-total-count"]) == (3, "3")
+    assert counts_small == []  # no count needed: that is everything
+    assert (len(full.json()), full.headers["x-total-count"]) == (2, "3")
+    assert len(counts_full) == 1
+    assert (len(exact.json()), exact.headers["x-total-count"]) == (3, "3")
+
+
+async def test_the_rejection_row_cap_is_per_sensor_and_excess_is_still_refused(
+    app: FastAPI,
+    client: httpx.AsyncClient,
+    auth: dict[str, str],
+    engine: AsyncEngine,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    app.state.rejection_limiter = LoginThrottle(max_failures=3, window_seconds=60)
+    series_id, noisy = await setup(client, auth, name="noisy")
+    quiet = (
+        await client.post(
+            "/api/sensors", json={"name": "quiet", "seriesId": series_id}, headers=auth
+        )
+    ).json()
+    with caplog.at_level(logging.DEBUG, logger="zai.measurements"):
+        responses = [await send(client, noisy["apiKey"], value=999, timestamp=T0) for _ in range(8)]
+        codes = [r.status_code for r in responses]
+        other = await send(client, quiet["apiKey"], value=999, timestamp=T0)
+    assert codes == [422] * 8  # every one is refused...
+    assert other.status_code == 422
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text("SELECT sensor_id, count(*) FROM measurement_rejections GROUP BY sensor_id")
+            )
+        ).all()
+    assert {(r[0], r[1]) for r in rows} == {(noisy["id"], 3), (quiet["id"], 1)}  # ...3 rows, not 8
+    records = [r for r in caplog.records if r.getMessage() == "measurement.rejected"]
+    warnings = [r for r in records if r.levelno == logging.WARNING]
+    debug = [r for r in records if r.levelno == logging.DEBUG]
+    assert (len(warnings), len(debug)) == (4, 5)  # 3 noisy + 1 quiet recorded, 5 over the cap
+    assert all(r.fields["recorded"] is False for r in debug)  # type: ignore[attr-defined]
+
+
+async def test_old_rejections_are_purged_and_recent_ones_kept(
+    app: FastAPI, client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    _, sensor = await setup(client, auth)
+    for _ in range(3):
+        await send(client, sensor["apiKey"], value=999, timestamp=T0)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE measurement_rejections SET created_at = now() - interval '31 days' "
+                "WHERE id IN (SELECT min(id) FROM measurement_rejections)"
+            )
+        )
+    async with app.state.session_factory() as session:
+        assert await measurement_service.purge_old_rejections(session, 30) == 1
+    assert await count(engine, "measurement_rejections") == 2
+    async with app.state.session_factory() as session:
+        assert await measurement_service.purge_old_rejections(session, 30) == 0
+
+
+async def test_one_clock_is_used_for_receipt_and_last_seen(
+    client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    _, sensor = await setup(client, auth)
+    await send(client, sensor["apiKey"], value=1, timestamp=T0)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT m.received_at = s.last_measurement_at AS same, "
+                    "abs(extract(epoch FROM now() - m.received_at)) < 10 AS recent "
+                    "FROM measurements m JOIN sensors s ON s.id = m.sensor_id"
+                )
+            )
+        ).one()
+    assert (row.same, row.recent) == (True, True)

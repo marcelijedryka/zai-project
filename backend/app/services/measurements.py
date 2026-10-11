@@ -5,22 +5,31 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import ColumnElement, func, select, update
+from sqlalchemy import ColumnElement, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Measurement, MeasurementRejection, Sensor, Series
 from app.realtime.notify import MEASUREMENTS_CHANNEL, notify
+from app.security.rate_limit import LoginThrottle
 from app.services.sensors import SensorIdentity
 
 logger = logging.getLogger("zai.measurements")
 
 FUTURE_TOLERANCE = timedelta(minutes=5)
-EARLIEST = datetime(1970, 1, 1, tzinfo=UTC)  # keeps chunk creation sane; far past is not data
+EARLIEST_UTC = datetime.min.replace(tzinfo=UTC)  # clamp targets for out-of-range conversions
 LATEST_UTC = datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC)
 
 OUT_OF_RANGE = "out_of_range"
 FUTURE_TIMESTAMP = "future_timestamp"
 TOO_OLD = "timestamp_too_old"
+
+
+@dataclass(frozen=True)
+class IngestPolicy:
+    """Deployment-level limits applied to every ingestion."""
+
+    earliest: datetime  # measurements before this are refused (bounds the chunk count)
+    rejection_limiter: LoginThrottle  # caps recorded rejection rows per sensor
 
 
 class SensorGone(Exception):
@@ -48,11 +57,11 @@ class Page:
 
 
 def to_utc_clamped(moment: datetime) -> datetime:
-    """UTC version of ``moment``; values beyond year 9999 after conversion are clamped."""
+    """UTC version of ``moment``; if the conversion leaves datetime's range, clamp to that end."""
     try:
         return moment.astimezone(UTC)
     except OverflowError:
-        return LATEST_UTC
+        return EARLIEST_UTC if moment.year < 5000 else LATEST_UTC
 
 
 async def _reject(
@@ -65,9 +74,20 @@ async def _reject(
     extensions: dict[str, float | str],
     *,
     record: bool,
+    policy: IngestPolicy,
 ) -> MeasurementRejected:
-    """Log the rejection (error log); value/time rejections also keep a row for the admin UI."""
-    logger.warning(
+    """Log the rejection (error log); value/time rejections also keep a row for the admin UI.
+
+    A sensor can only add ``rejection_rows_per_sensor_per_minute`` rows (and WARNING lines) a
+    minute; further rejections are still refused with 422 but logged at DEBUG, without a row.
+    """
+    if record and policy.rejection_limiter.acquire(f"sensor:{identity.sensor_id}") is not None:
+        record = False
+        level = logging.DEBUG
+    else:
+        level = logging.WARNING
+    logger.log(
+        level,
         "measurement.rejected",
         extra={
             "fields": {
@@ -76,6 +96,7 @@ async def _reject(
                 "seriesId": identity.series_id,
                 "value": value,
                 "timestamp": to_utc_clamped(moment).isoformat(),
+                "recorded": record,
                 **extensions,
             }
         },
@@ -97,7 +118,11 @@ async def _reject(
 
 
 async def ingest(
-    session: AsyncSession, identity: SensorIdentity, value: float, timestamp: datetime | None
+    session: AsyncSession,
+    identity: SensorIdentity,
+    value: float,
+    timestamp: datetime | None,
+    policy: IngestPolicy,
 ) -> Measurement:
     """Validate and store one measurement, update the sensor, announce it - one transaction.
 
@@ -105,7 +130,7 @@ async def ingest(
     then sensor (``FOR NO KEY UPDATE``, so an unregistration waits and later wins). A deleted
     series or revoked sensor means the key is no longer valid: ``SensorGone`` (401).
     """
-    now = datetime.now(UTC)
+    now = datetime.now(UTC)  # the one clock for this request: future check, received_at, last seen
     series = (
         await session.execute(
             select(Series.name, Series.min_value, Series.max_value)
@@ -127,16 +152,17 @@ async def ingest(
 
     moment = timestamp or now
     low, high = float(series.min_value), float(series.max_value)
-    if moment < EARLIEST:
+    if moment < policy.earliest:
         raise await _reject(
             session,
             identity,
             value,
             moment,
             TOO_OLD,
-            "The timestamp must not be earlier than 1970-01-01T00:00:00Z.",
+            f"The timestamp must not be earlier than {policy.earliest:%Y-%m-%dT%H:%M:%SZ}.",
             {},
             record=False,
+            policy=policy,
         )
     if not low <= value <= high:
         raise await _reject(
@@ -149,6 +175,7 @@ async def ingest(
             f"of series '{series.name}'.",
             {"min": low, "max": high},
             record=True,
+            policy=policy,
         )
     if moment > now + FUTURE_TOLERANCE:
         raise await _reject(
@@ -160,18 +187,20 @@ async def ingest(
             "The timestamp is more than 5 minutes ahead of the server clock.",
             {"serverTime": now.isoformat()},
             record=True,
+            policy=policy,
         )
 
     measurement = Measurement(
         series_id=identity.series_id,
         sensor_id=identity.sensor_id,
         value=value,
-        ts=moment.astimezone(UTC),  # safe: EARLIEST <= moment <= now + 5 min
+        ts=moment.astimezone(UTC),  # safe: earliest <= moment <= now + 5 min
+        received_at=now,
     )
     session.add(measurement)
     await session.flush()
     await session.execute(
-        update(Sensor).where(Sensor.id == identity.sensor_id).values(last_measurement_at=func.now())
+        update(Sensor).where(Sensor.id == identity.sensor_id).values(last_measurement_at=now)
     )
     await notify(
         session,
@@ -213,6 +242,8 @@ async def list_measurements(
         order = (Measurement.ts.asc(), Measurement.id.asc())  # id: stable order for equal ts
     query = select(Measurement).where(*conditions).order_by(*order).limit(limit)
     items = (await session.execute(query)).scalars().all()
+    if len(items) < limit:
+        return Page(items=items, total=len(items))  # the page is not full: that is everything
     total = (
         await session.execute(select(func.count()).select_from(Measurement).where(*conditions))
     ).scalar_one()
@@ -226,3 +257,14 @@ async def get_measurement(session: AsyncSession, measurement_id: int) -> Measure
     if measurement is None:
         raise MeasurementNotFound
     return measurement
+
+
+async def purge_old_rejections(session: AsyncSession, retention_days: int) -> int:
+    """Delete rejection rows older than ``retention_days``; returns how many."""
+    result = await session.execute(
+        delete(MeasurementRejection).where(
+            MeasurementRejection.created_at < func.now() - timedelta(days=retention_days)
+        )
+    )
+    await session.commit()
+    return int(result.rowcount or 0)  # type: ignore[attr-defined]

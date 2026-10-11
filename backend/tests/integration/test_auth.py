@@ -463,12 +463,12 @@ async def test_background_task_purges_expired_sessions(
 ) -> None:
     import asyncio
 
-    from app.tasks import purge_expired_sessions_forever
+    from app.tasks import housekeeping_forever
 
     await login(client, admin)
     async with engine.begin() as conn:
         await conn.execute(text("UPDATE sessions SET expires_at = now() - interval '1 hour'"))
-    task = asyncio.create_task(purge_expired_sessions_forever(app.state.session_factory, 0.01))
+    task = asyncio.create_task(housekeeping_forever(app.state.session_factory, 30, 0.01))
     try:
         for _ in range(100):
             if await session_count(engine) == 0:

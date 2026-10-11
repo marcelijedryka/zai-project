@@ -4,7 +4,7 @@ import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
 from pydantic import AwareDatetime, TypeAdapter, ValidationError
 
 from app.core.problems import ProblemError
@@ -22,6 +22,13 @@ _AWARE = TypeAdapter(AwareDatetime)
 # A "+" in a query string decodes to a space, so "...10:00:00+01:00" arrives as "...10:00:00 01:00".
 _LOST_PLUS = re.compile(r"(?<=\d) (?=\d\d:\d\d$)")
 _EPOCH_NUMBER = re.compile(r"-?\d+(\.\d+)?")  # pydantic would read these as Unix timestamps
+
+
+def _policy(request: Request) -> service.IngestPolicy:
+    return service.IngestPolicy(
+        earliest=request.app.state.settings.earliest_measurement_timestamp,
+        rejection_limiter=request.app.state.rejection_limiter,
+    )
 
 
 def _out(measurement: Measurement) -> MeasurementOut:
@@ -100,11 +107,17 @@ async def list_measurements(
 
 @router.post("", status_code=201, response_model_exclude_none=True)
 async def create_measurement(
-    sensor: SensorDep, body: MeasurementInput, session: SessionDep, response: Response
+    sensor: SensorDep,
+    body: MeasurementInput,
+    session: SessionDep,
+    response: Response,
+    request: Request,
 ) -> MeasurementOut:
     # Order: 415 (middleware) -> 401 (SensorDep) -> 400 (body) -> 422 (range, future timestamp).
     try:
-        measurement = await service.ingest(session, sensor, body.value, body.timestamp)
+        measurement = await service.ingest(
+            session, sensor, body.value, body.timestamp, _policy(request)
+        )
     except service.SensorGone:
         raise ProblemError(
             401,

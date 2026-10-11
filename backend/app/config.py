@@ -1,11 +1,12 @@
 """Application settings, read from the environment (see ``.env.example``)."""
 
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import AwareDatetime, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -29,6 +30,14 @@ class Settings(BaseSettings):
     # Comma-separated in the environment; explicit allow-list, never "*" (credentials are on).
     # These origins are also the only ones trusted for cookie-authenticated unsafe requests.
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
+    # Measurements older than this are refused. A floor (not a rolling window) because the official
+    # tests use fixed past dates; it bounds the number of 7-day Timescale chunks (about 52 a year)
+    # that queries over all of them must lock, and an unbounded past could exhaust the lock table.
+    earliest_measurement_timestamp: AwareDatetime = datetime(2020, 1, 1, tzinfo=UTC)
+    # Rejected measurements are kept for the admin error-log view, then purged hourly. A faulty
+    # sensor can only add this many rows per minute (the rest is still refused and logged).
+    rejection_retention_days: int = Field(default=30, ge=1)
+    rejection_rows_per_sensor_per_minute: int = Field(default=60, ge=1)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     error_log_file: Path | None = None
 

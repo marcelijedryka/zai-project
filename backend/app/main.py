@@ -28,7 +28,7 @@ from app.core.problems import (
 from app.db import create_engine, create_session_factory
 from app.security.passwords import HashingBusy, warm_up
 from app.security.rate_limit import LoginThrottle
-from app.tasks import purge_expired_sessions_forever
+from app.tasks import housekeeping_forever
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -42,7 +42,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.login_throttle = LoginThrottle()  # per (client, username)
         app.state.ip_throttle = LoginThrottle(max_failures=30)  # per client, any username
         await warm_up()
-        purge_task = asyncio.create_task(purge_expired_sessions_forever(app.state.session_factory))
+        app.state.rejection_limiter = LoginThrottle(
+            max_failures=settings.rejection_rows_per_sensor_per_minute, window_seconds=60
+        )
+        purge_task = asyncio.create_task(
+            housekeeping_forever(app.state.session_factory, settings.rejection_retention_days)
+        )
         try:
             yield
         finally:
