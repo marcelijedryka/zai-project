@@ -17,6 +17,7 @@ from app.core.middleware import (
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
 )
+from app.core.paths import DOCS_PATH
 from app.core.problems import (
     ProblemError,
     http_exception_handler,
@@ -44,7 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
         redirect_slashes=False,
-        docs_url="/api/docs" if settings.docs_enabled else None,
+        docs_url=DOCS_PATH if settings.docs_enabled else None,
         redoc_url=None,
         # Schema stays public in prod on purpose (plan §5.5); only Swagger UI is dev-only.
         openapi_url="/api/openapi.json",

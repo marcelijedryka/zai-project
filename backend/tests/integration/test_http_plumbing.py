@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from app.config import Settings
 from app.core.logging import JsonFormatter
-from app.core.problems import PROBLEM_MEDIA_TYPE, ProblemError
+from app.core.problems import MAX_VALIDATION_ERRORS, PROBLEM_MEDIA_TYPE, ProblemError
 from app.main import create_app
 
 ALLOWED_ORIGIN = "http://localhost:5173"
@@ -23,12 +23,29 @@ class Item(BaseModel):
     value: float
 
 
+class Location(BaseModel):
+    path: int
+    query: int
+
+
+class Nested(BaseModel):
+    location: Location
+
+
 def _build_app(settings: Settings) -> FastAPI:
     app = create_app(settings)
 
     @app.post("/api/_t/items", status_code=201)
     async def create_item(item: Item) -> dict[str, object]:
         return {"name": item.name, "value": item.value}
+
+    @app.post("/api/_t/nested", status_code=201)
+    async def create_nested(nested: Nested) -> dict[str, str]:
+        return {"ok": "yes"}
+
+    @app.post("/api/_t/many", status_code=201)
+    async def create_many(items: list[Item]) -> dict[str, int]:
+        return {"n": len(items)}
 
     @app.delete("/api/_t/items/1", status_code=204)
     async def delete_item() -> Response:
@@ -102,6 +119,20 @@ async def test_validation_errors_are_400_with_field_messages(api: httpx.AsyncCli
     body = _assert_problem(response, 400)
     fields = {e["field"] for e in body["errors"]}  # type: ignore[attr-defined]
     assert fields == {"name", "value"}
+
+
+async def test_nested_fields_named_like_request_parts_keep_their_names(
+    api: httpx.AsyncClient,
+) -> None:
+    response = await api.post("/api/_t/nested", json={"location": {"path": "x", "query": "y"}})
+    body = _assert_problem(response, 400)
+    assert {e["field"] for e in body["errors"]} == {"location.path", "location.query"}  # type: ignore[attr-defined]
+
+
+async def test_validation_error_list_is_capped(api: httpx.AsyncClient) -> None:
+    response = await api.post("/api/_t/many", json=[{"value": "bad"}] * 200)
+    body = _assert_problem(response, 400)
+    assert len(body["errors"]) == MAX_VALIDATION_ERRORS  # type: ignore[arg-type]
 
 
 async def test_validation_errors_never_echo_the_input(api: httpx.AsyncClient) -> None:
@@ -295,3 +326,29 @@ async def test_health_503_is_a_problem(settings: Settings) -> None:
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c,
     ):
         _assert_problem(await c.get("/api/health"), 503)
+
+
+async def test_aborted_request_is_logged_without_a_fake_status(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import asyncio
+
+    from app.core.middleware import RequestContextMiddleware
+
+    async def cancelled_app(scope: dict[str, object], receive: object, send: object) -> None:
+        raise asyncio.CancelledError
+
+    middleware = RequestContextMiddleware(cancelled_app)  # type: ignore[arg-type]
+    scope = {"type": "http", "method": "GET", "path": "/api/slow", "headers": []}
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        raise AssertionError("no response should be sent")
+
+    with caplog.at_level(logging.INFO, logger="zai.access"), pytest.raises(asyncio.CancelledError):
+        await middleware(scope, receive, send)  # type: ignore[arg-type]
+    record = next(r for r in caplog.records if r.name == "zai.access")
+    assert record.fields["status"] is None  # type: ignore[attr-defined]
+    assert record.fields["aborted"] is True  # type: ignore[attr-defined]

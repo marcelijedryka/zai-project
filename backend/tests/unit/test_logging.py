@@ -22,6 +22,11 @@ def test_redact_is_recursive_and_keeps_harmless_values() -> None:
     }
 
 
+def test_redact_matches_snake_case_and_kebab_case_keys() -> None:
+    data = {"refresh_token": "a", "current_password": "b", "api_key": "c", "Set-Cookie": "d"}
+    assert redact(data) == dict.fromkeys(data, REDACTED)
+
+
 def test_redact_scrubs_secrets_inside_free_text() -> None:
     text = f"failed with {BEARER} and key {API_KEY} cookie __Host-zai_session=abc123; Path=/"
     cleaned = redact(text)
@@ -77,3 +82,52 @@ def test_configure_logging_writes_warnings_to_the_error_log_file(tmp_path: Path)
     assert entry["event"] == "measurement.rejected"
     assert (entry["seriesId"], entry["level"]) == (3, "WARNING")
     assert API_KEY not in lines[0]
+
+
+def test_configure_logging_is_idempotent_and_closes_old_handlers(tmp_path: Path) -> None:
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    try:
+        configure_logging("INFO", tmp_path / "errors.log")
+        first = next(h for h in root.handlers if isinstance(h, logging.FileHandler))
+        configure_logging("INFO", tmp_path / "errors.log")
+        assert first.stream is None  # closed, not leaked
+        assert sum(isinstance(h, logging.FileHandler) for h in root.handlers) == 1
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            handler.close()
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
+
+
+def test_configure_logging_routes_uvicorn_loggers_through_root(tmp_path: Path) -> None:
+    root = logging.getLogger()
+    saved = {
+        n: (list(logging.getLogger(n).handlers), logging.getLogger(n).propagate)
+        for n in ("uvicorn", "uvicorn.error", "uvicorn.access")
+    }
+    saved_handlers, saved_level = list(root.handlers), root.level
+    plain = logging.StreamHandler()
+    logging.getLogger("uvicorn").addHandler(plain)
+    logging.getLogger("uvicorn").propagate = False
+    try:
+        logging.getLogger("uvicorn.access").propagate = False  # what --no-access-log does
+        configure_logging("INFO")
+        for name in ("uvicorn", "uvicorn.error"):
+            logger = logging.getLogger(name)
+            assert logger.propagate is True
+            assert plain not in logger.handlers
+        assert logging.getLogger("uvicorn.access").propagate is False  # stays disabled
+    finally:
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+            handler.close()
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
+        for name, (handlers, propagate) in saved.items():
+            logger = logging.getLogger(name)
+            logger.handlers[:] = handlers
+            logger.propagate = propagate

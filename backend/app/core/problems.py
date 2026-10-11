@@ -15,6 +15,7 @@ _DEFAULT_DETAILS = {
     405: "This method is not allowed for the resource.",
 }
 _LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
+MAX_VALIDATION_ERRORS = 50  # a huge invalid array must not amplify into a huge response
 
 
 class ProblemResponse(JSONResponse):
@@ -39,15 +40,15 @@ def problem_response(
     extensions: dict[str, Any] | None = None,
     headers: dict[str, str] | None = None,
 ) -> ProblemResponse:
-    body: dict[str, Any] = {"type": type_, "title": title or _phrase(status), "status": status}
+    # Extensions go first so they can never overwrite the standard members.
+    body: dict[str, Any] = dict(extensions or {})
+    body |= {"type": type_, "title": title or _phrase(status), "status": status}
     if detail:
         body["detail"] = detail
     if instance:
         body["instance"] = instance
     if errors:
         body["errors"] = errors
-    if extensions:
-        body.update(extensions)
     return ProblemResponse(body, status_code=status, headers=headers)
 
 
@@ -102,22 +103,24 @@ async def http_exception_handler(request: Request, exc: Exception) -> Response:
 
 
 def _field(loc: tuple[Any, ...]) -> str:
-    parts = [str(p) for p in loc if p not in _LOCATION_PREFIXES]
-    return ".".join(parts) or "body"
+    """Dotted path of the failing field; only the leading request-part marker is dropped."""
+    parts = loc[1:] if loc and loc[0] in _LOCATION_PREFIXES else loc
+    return ".".join(str(p) for p in parts) or "body"
 
 
 async def validation_exception_handler(request: Request, exc: Exception) -> Response:
     """Every request-validation failure is a 400 with per-field ``errors``.
 
     Only the pydantic message is reported, never the offending input, so secrets
-    (passwords, keys) sent in a malformed body are not echoed back.
+    (passwords, keys) sent in a malformed body are not echoed back. That holds for pydantic's
+    built-in messages; custom validators must not put the value into their error text.
     """
     exc = cast(RequestValidationError, exc)
     errors = [
         {"field": "body", "message": "Request body is not valid JSON"}
         if err["type"] == "json_invalid"
         else {"field": _field(tuple(err["loc"])), "message": str(err["msg"])}
-        for err in exc.errors()
+        for err in exc.errors()[:MAX_VALIDATION_ERRORS]
     ]
     return problem_response(
         400,

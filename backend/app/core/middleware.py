@@ -18,13 +18,12 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import redact, request_id_var
+from app.core.paths import DOCS_PATH, STREAM_PATH
 from app.core.problems import problem_response
 
 access_logger = logging.getLogger("zai.access")
 error_logger = logging.getLogger("zai.errors")
 
-STREAM_PATH = "/api/measurements/stream"
-DOCS_PATH = "/api/docs"
 JSON_TYPES = ("application/json", "application/problem+json")
 STREAM_TYPES = ("text/event-stream",)
 API_CSP = "default-src 'none'; frame-ancestors 'none'"
@@ -182,7 +181,7 @@ class RequestContextMiddleware:
         incoming = Headers(scope=scope).get("x-request-id", "")
         request_id = incoming if _REQUEST_ID.match(incoming) else uuid.uuid4().hex
         token = request_id_var.set(request_id)
-        status = 500
+        status: int | None = None  # stays None if the client goes away before a response starts
         started = time.perf_counter()
 
         async def send_with_id(message: Message) -> None:
@@ -201,5 +200,7 @@ class RequestContextMiddleware:
                 "status": status,
                 "durationMs": round((time.perf_counter() - started) * 1000, 1),
             }
+            if status is None:
+                fields["aborted"] = True
             access_logger.info("http.request", extra={"fields": fields})
             request_id_var.reset(token)

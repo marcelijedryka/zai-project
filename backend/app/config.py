@@ -1,5 +1,6 @@
 """Application settings, read from the environment (see ``.env.example``)."""
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -10,6 +11,9 @@ from sqlalchemy import URL
 
 # Repo-root .env for host-side runs (uvicorn, pytest, alembic); in containers the
 # variables come from compose and this path simply does not exist.
+# A browser Origin is exactly scheme://host[:port]; "*" with credentials would reflect any origin.
+_ORIGIN = re.compile(r"https?://[^/\s?#*]+")
+
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
@@ -24,7 +28,7 @@ class Settings(BaseSettings):
     environment: Literal["dev", "test", "prod"] = "dev"
     # Comma-separated in the environment; explicit allow-list, never "*" (credentials are on).
     cors_allowed_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
-    log_level: str = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     error_log_file: Path | None = None
 
     @field_validator("cors_allowed_origins", mode="before")
@@ -33,6 +37,22 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("cors_allowed_origins")
+    @classmethod
+    def _check_origins(cls, origins: list[str]) -> list[str]:
+        for origin in origins:
+            if not _ORIGIN.fullmatch(origin):
+                raise ValueError(
+                    f"invalid CORS origin {origin!r}: use scheme://host[:port] "
+                    "(no wildcard, path or trailing slash)"
+                )
+        return origins
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _upper_level(cls, value: object) -> object:
+        return value.upper() if isinstance(value, str) else value
 
     @property
     def database_url(self) -> URL:
