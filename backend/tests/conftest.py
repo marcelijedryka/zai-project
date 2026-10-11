@@ -103,3 +103,20 @@ async def admin(app: FastAPI) -> Admin:
     async with app.state.session_factory() as session:
         user = await users.create_user(session, ADMIN_USERNAME, ADMIN_PASSWORD)
         return Admin(id=user.id, username=user.username, password=ADMIN_PASSWORD)
+
+
+@pytest.fixture
+async def token(client: httpx.AsyncClient, admin: Admin) -> str:
+    """A valid admin Bearer token."""
+    response = await client.post(
+        "/api/auth/login", json={"username": admin.username, "password": admin.password}
+    )
+    assert response.status_code == 200
+    value: str = response.json()["accessToken"]
+    return value
+
+
+@pytest.fixture
+def auth(token: str) -> dict[str, str]:
+    """``Authorization`` header for admin requests."""
+    return {"Authorization": f"Bearer {token}"}

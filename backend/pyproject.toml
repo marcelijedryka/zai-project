@@ -35,6 +35,8 @@ addopts = "--strict-markers"
 
 [tool.coverage.run]
 source = ["app"]
+# SQLAlchemy's async layer runs on greenlets; without this their lines are not recorded.
+concurrency = ["thread", "greenlet"]
 
 [tool.coverage.report]
 fail_under = 85
