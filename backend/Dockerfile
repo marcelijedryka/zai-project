@@ -32,6 +32,8 @@ CMD ["uvicorn", "app.main:get_app", "--factory", "--host", "0.0.0.0", "--port", 
 # Production: runtime dependencies only, source baked in, non-root.
 FROM base AS runtime
 COPY --from=deps-prod /opt/venv /opt/venv
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY app ./app
 USER app
 EXPOSE 8000
