@@ -1,5 +1,6 @@
 """RFC 9457 Problem Details: response builder, exception type and handlers."""
 
+import re
 from http import HTTPStatus
 from typing import Any, cast
 
@@ -16,6 +17,22 @@ _DEFAULT_DETAILS = {
 }
 _LOCATION_PREFIXES = {"body", "query", "path", "header", "cookie"}
 MAX_VALIDATION_ERRORS = 50  # a huge invalid array must not amplify into a huge response
+
+
+def allowed_methods(request: Request) -> str | None:
+    """Every method the app supports for the request path, for the ``Allow`` header.
+
+    Starlette's own header lists only the first partially matching route, which is misleading
+    when a path has several (``GET``/``PUT``/``DELETE`` on ``/api/series/{id}``). The OpenAPI
+    schema (cached by FastAPI) lists them all.
+    """
+    methods: set[str] = set()
+    for template, operations in request.app.openapi().get("paths", {}).items():
+        if re.fullmatch(re.sub(r"\{[^}/]+\}", "[^/]+", template), request.url.path):
+            methods |= {m.upper() for m in operations}
+    if "GET" in methods:
+        methods.add("HEAD")
+    return ", ".join(sorted(methods)) or None
 
 
 class ProblemResponse(JSONResponse):
@@ -94,11 +111,14 @@ async def http_exception_handler(request: Request, exc: Exception) -> Response:
     """Routing 404/405 and any ``HTTPException`` (``Allow`` and other headers are kept)."""
     exc = cast(StarletteHTTPException, exc)
     detail = exc.detail if exc.detail != _phrase(exc.status_code) else None
+    headers = dict(exc.headers) if exc.headers else {}
+    if exc.status_code == 405 and (allow := allowed_methods(request)):
+        headers["Allow"] = allow
     return problem_response(
         exc.status_code,
         instance=request.url.path,
         detail=detail or _DEFAULT_DETAILS.get(exc.status_code),
-        headers=dict(exc.headers) if exc.headers else None,
+        headers=headers or None,
     )
 
 
@@ -116,6 +136,9 @@ async def validation_exception_handler(request: Request, exc: Exception) -> Resp
     built-in messages; custom validators must not put the value into their error text.
     """
     exc = cast(RequestValidationError, exc)
+    if any(err["loc"] and err["loc"][0] == "path" for err in exc.errors()):
+        # An id that does not parse or is out of range cannot name an existing resource.
+        return problem_response(404, instance=request.url.path, detail=_DEFAULT_DETAILS[404])
     errors = [
         {"field": "body", "message": "Request body is not valid JSON"}
         if err["type"] == "json_invalid"
