@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
-RUN useradd --system --uid 10001 --no-create-home app
+RUN useradd --system --uid 10001 --create-home app
 
 FROM base AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.12.23 /uv /bin/uv

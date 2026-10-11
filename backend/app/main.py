@@ -30,6 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redirect_slashes=False,
         docs_url="/api/docs" if settings.docs_enabled else None,
         redoc_url=None,
+        # Schema stays public in prod on purpose (plan §5.5); only Swagger UI is dev-only.
         openapi_url="/api/openapi.json",
     )
     app.include_router(health.router, prefix="/api")

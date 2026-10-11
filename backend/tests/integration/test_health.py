@@ -12,7 +12,7 @@ async def test_health_ok(client: httpx.AsyncClient) -> None:
 
 async def test_health_503_when_database_is_down(settings: Settings) -> None:
     bad = settings.model_copy(
-        update={"database_url": "postgresql+asyncpg://x:x@127.0.0.1:1/none"},
+        update={"postgres_host": "127.0.0.1", "postgres_port": 1},
     )
     app = create_app(bad)
     async with (

@@ -1,4 +1,3 @@
-import os
 from collections.abc import AsyncIterator
 
 import httpx
@@ -10,7 +9,8 @@ from app.main import create_app
 
 @pytest.fixture
 def settings() -> Settings:
-    return Settings(database_url=os.environ["DATABASE_URL"], environment="test")
+    """Reads POSTGRES_* from the environment or the repo-root .env (``make dev`` creates it)."""
+    return Settings(environment="test")
 
 
 @pytest.fixture
