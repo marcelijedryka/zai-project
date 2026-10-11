@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, series
+from app.api import auth, health, sensors, series
 from app.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import (
@@ -86,6 +86,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
     app.include_router(series.router, prefix="/api")
+    app.include_router(sensors.router, prefix="/api")
     return app
 
 

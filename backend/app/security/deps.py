@@ -8,10 +8,11 @@ from app.core.problems import ProblemError
 from app.db import SessionDep
 from app.security.rate_limit import LoginThrottle
 from app.security.tokens import COOKIE_NAME
-from app.services import auth
+from app.services import auth, sensors
 
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 BEARER_CHALLENGE = {"WWW-Authenticate": "Bearer"}
+API_KEY_CHALLENGE = {"WWW-Authenticate": 'ApiKey header="X-API-Key"'}
 
 
 def unauthorized(detail: str = "Authentication required.") -> ProblemError:
@@ -51,6 +52,17 @@ async def require_admin(request: Request, session: SessionDep) -> auth.AdminIden
     return identity
 
 
+async def require_sensor(request: Request, session: SessionDep) -> sensors.SensorIdentity:
+    """Authenticate a sensor by ``X-API-Key`` only; an admin Bearer token is never enough.
+
+    Revoked keys fail at once because the lookup filters on ``revoked_at IS NULL``.
+    """
+    identity = await sensors.authenticate_sensor(session, request.headers.get("x-api-key", ""))
+    if identity is None:
+        raise ProblemError(401, "A valid sensor API key is required.", headers=API_KEY_CHALLENGE)
+    return identity
+
+
 def get_login_throttle(request: Request) -> LoginThrottle:
     throttle: LoginThrottle = request.app.state.login_throttle
     return throttle
@@ -62,5 +74,6 @@ def get_ip_throttle(request: Request) -> LoginThrottle:
 
 
 AdminDep = Annotated[auth.AdminIdentity, Depends(require_admin)]
+SensorDep = Annotated[sensors.SensorIdentity, Depends(require_sensor)]
 ThrottleDep = Annotated[LoginThrottle, Depends(get_login_throttle)]
 IpThrottleDep = Annotated[LoginThrottle, Depends(get_ip_throttle)]
