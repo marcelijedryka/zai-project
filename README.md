@@ -3,8 +3,7 @@
 IoT measurement-series web app (Warsaw air temperature and air quality).
 FastAPI + PostgreSQL/TimescaleDB backend, React SPA, Python sensor emulator.
 
-Status: work in progress. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) for the
-architecture and [`docs/PROGRESS.md`](docs/PROGRESS.md) for the current state.
+Status: work in progress.
 
 ## Layout
 
