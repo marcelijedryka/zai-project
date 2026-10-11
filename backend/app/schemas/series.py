@@ -1,12 +1,9 @@
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import Field, StringConstraints
+from pydantic import StringConstraints
 
-from app.schemas.common import CamelModel, RequestModel
-
-# JSON numbers only (ints are fine; strings and booleans are not), and never NaN/Infinity.
-FiniteFloat = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+from app.schemas.common import CamelModel, FiniteFloat, RequestModel
 
 
 class SeriesInput(RequestModel):
