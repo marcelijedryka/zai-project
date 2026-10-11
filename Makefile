@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: dev down test lint fmt migrate schema-sql seed contract-test
+.PHONY: dev down test lint fmt migrate schema-sql seed contract-test create-admin
 
 .env:
 	cp .env.example .env
@@ -26,6 +26,9 @@ fmt: ## Auto-format and fix
 migrate: dev ## Apply Alembic migrations
 	@test -f backend/alembic.ini || { echo "Alembic is not set up yet (Phase 1)"; exit 1; }
 	$(COMPOSE) exec api alembic upgrade head
+
+create-admin: dev ## Create the admin account (hidden password prompt): make create-admin USERNAME=admin
+	$(COMPOSE) exec api python -m app.cli create-admin --username $${USERNAME:-admin}
 
 schema-sql: ## Regenerate db/schema.sql (offline Alembic); the old file is kept on failure
 	@test -f backend/alembic.ini || { echo "Alembic is not set up yet (Phase 1)"; exit 1; }

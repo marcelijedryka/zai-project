@@ -1,14 +1,15 @@
 """FastAPI application factory."""
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api import health
+from app.api import auth, health
 from app.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import (
@@ -25,6 +26,8 @@ from app.core.problems import (
     validation_exception_handler,
 )
 from app.db import create_engine, create_session_factory
+from app.security.rate_limit import LoginThrottle
+from app.tasks import purge_expired_sessions_forever
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -35,9 +38,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine = create_engine(settings.database_url)
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
+        app.state.login_throttle = LoginThrottle()
+        purge_task = asyncio.create_task(purge_expired_sessions_forever(app.state.session_factory))
         try:
             yield
         finally:
+            purge_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await purge_task
             await engine.dispose()
 
     app = FastAPI(
@@ -70,7 +78,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
 
+    app.state.settings = settings
     app.include_router(health.router, prefix="/api")
+    app.include_router(auth.router, prefix="/api")
     return app
 
 
