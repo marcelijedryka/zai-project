@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: dev down test lint fmt migrate schema-sql seed contract-test create-admin e2e
+.PHONY: dev down test test-generator lint fmt migrate schema-sql seed contract-test create-admin e2e
 
 .env:
 	cp .env.example .env
@@ -17,11 +17,16 @@ test: .env ## Backend tests against the real Timescale DB (settings read from .e
 	$(COMPOSE) up -d --wait db
 	cd backend && uv run pytest --cov
 
-lint: ## ruff + mypy
+lint: ## ruff + mypy (backend and generator)
 	cd backend && uv run ruff check . && uv run ruff format --check . && uv run mypy
+	cd generator && uv run ruff check . && uv run ruff format --check . && uv run mypy
 
 fmt: ## Auto-format and fix
 	cd backend && uv run ruff check --fix . && uv run ruff format .
+	cd generator && uv run ruff check --fix . && uv run ruff format .
+
+test-generator: ## Generator unit tests (mocked API); the real-app test runs in `make test`
+	cd generator && uv run pytest --cov
 
 migrate: dev ## Apply Alembic migrations
 	@test -f backend/alembic.ini || { echo "Alembic is not set up yet (Phase 1)"; exit 1; }

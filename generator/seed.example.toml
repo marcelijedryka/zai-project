@@ -1,0 +1,86 @@
+# Sample data for F11: five series (never prefixed ZAI-TEST-, that prefix is the official
+# test-suite's own and is ignored by its sample-data check). `zai-sensor seed` creates the
+# series and one sensor per series through the API, then backfills `days` of hourly values
+# with each sensor's key. Real data comes from Open-Meteo; `[series.synthetic]` is the
+# series' own pattern (used for the lab series and by `seed --source synthetic`, offline).
+
+days = 14  # hourly values per series: days x 24
+seed = 42  # base seed of the synthetic patterns (series i uses seed + i)
+
+[location]  # Warsaw
+latitude = 52.2297
+longitude = 21.0122
+
+[[series]]
+name = "Warsaw – Air temperature"
+unit = "°C"
+min = -40
+max = 50
+color = "#1f77b4"
+icon = "circle"
+variable = "temperature_2m"
+[series.synthetic]
+pattern = "sine"
+offset = 11
+amplitude = 6
+noise = 0.6
+peak_hour = 15
+
+[[series]]
+name = "Warsaw – PM2.5"
+unit = "µg/m³"
+min = 0
+max = 500
+color = "#d62728"
+icon = "triangle"
+variable = "pm2_5"
+[series.synthetic]
+pattern = "sine"
+offset = 22
+amplitude = 9
+noise = 3
+peak_hour = 7
+
+[[series]]
+name = "Warsaw – PM10"
+unit = "µg/m³"
+min = 0
+max = 600
+color = "#2ca02c"
+icon = "rect"
+variable = "pm10"
+[series.synthetic]
+pattern = "sine"
+offset = 30
+amplitude = 11
+noise = 4
+peak_hour = 8
+
+[[series]]
+name = "Warsaw – NO₂"
+unit = "µg/m³"
+min = 0
+max = 400
+color = "#9467bd"
+icon = "rectRot"
+variable = "nitrogen_dioxide"
+[series.synthetic]
+pattern = "sine"
+offset = 28
+amplitude = 14
+noise = 3
+peak_hour = 18
+
+[[series]]
+name = "Lab – Indoor temperature (synthetic)"
+unit = "°C"
+min = 10
+max = 35
+color = "#8c564b"
+icon = "star"
+[series.synthetic]
+pattern = "sine"
+offset = 21
+amplitude = 3
+noise = 0.3
+peak_hour = 16

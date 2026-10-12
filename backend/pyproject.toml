@@ -23,13 +23,16 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
     "ruff>=0.16.9",
+    "typer>=0.27.2",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-pythonpath = ["."]
+# ../generator: the zai-sensor sources, so the generator can be run against the real app in tests.
+pythonpath = [".", "../generator"]
 testpaths = ["tests"]
 addopts = "--strict-markers"
 
@@ -53,12 +56,15 @@ select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "SIM", "C4", "RUF", "PT"]
 "tests/**" = ["S101", "S105", "S106"]
 # The ported official tests keep the script's compound assertions (`expect(a && b)`).
 "tests/contract/**" = ["PT018"]
+# The sample series are named "Warsaw – ..." (en dash) in the plan and the seed file.
+"tests/integration/test_generator.py" = ["RUF001"]
 
 [tool.mypy]
 python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["app", "tests", "alembic", "scripts"]
+mypy_path = "../generator"
 
 [[tool.mypy.overrides]]
 module = ["asyncpg.*"]
