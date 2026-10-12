@@ -188,14 +188,80 @@ def test_the_api_url_must_be_http(url: str) -> None:
     assert result.exit_code == 64
 
 
+REMOTE_HTTP = "http://api.example.org"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["send", "--value", "1"],
+        ["backfill", "--count", "2"],
+        ["live", "--count", "1"],
+        ["seed", "--config", str(Path(__file__).parents[1] / "seed.example.toml")],
+    ],
+)
+def test_plain_http_to_a_remote_host_is_refused_before_anything_is_sent_or_asked(
+    args: list[str],
+) -> None:
+    with respx.mock:  # any request would raise
+        result = runner.invoke(
+            cli.app, ["--api-url", REMOTE_HTTP, "--api-key", KEY, *args], input="never-read\n"
+        )
+    assert result.exit_code == 64
+    assert "refusing plain http://" in result.stderr
+    assert "Password" not in result.output  # the admin password prompt never appeared
+    assert KEY not in result.output
+
+
 @respx.mock
-def test_plain_http_to_a_remote_host_warns() -> None:
-    respx.post("http://api.example.org/api/measurements").mock(return_value=created())
-    respx.get("http://api.example.org/api/series/3").mock(return_value=httpx.Response(200, json={}))
+def test_allow_insecure_lets_plain_http_through_with_a_warning() -> None:
+    route = respx.post(f"{REMOTE_HTTP}/api/measurements").mock(return_value=created())
+    respx.get(f"{REMOTE_HTTP}/api/series/3").mock(return_value=httpx.Response(200, json={}))
     result = runner.invoke(
-        cli.app, ["--api-url", "http://api.example.org", "--api-key", KEY, "send", "--value", "1"]
+        cli.app,
+        ["--api-url", REMOTE_HTTP, "--api-key", KEY, "--allow-insecure", "send", "--value", "1"],
     )
-    assert "plain http" in result.stderr
+    assert result.exit_code == 0
+    assert route.call_count == 1
+    assert "travel unencrypted" in result.stderr
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.2:8000",
+        "http://[::1]:8000",
+        "http://api.localhost:8000",
+    ],
+)
+def test_plain_http_to_loopback_is_fine(url: str) -> None:
+    route = respx.post(f"{url}/api/measurements").mock(return_value=created())
+    respx.get(f"{url}/api/series/3").mock(return_value=httpx.Response(200, json={}))
+    result = runner.invoke(cli.app, ["--api-url", url, "--api-key", KEY, "send", "--value", "1"])
+    assert result.exit_code == 0
+    assert route.call_count == 1
+    assert "unencrypted" not in result.stderr
+
+
+@respx.mock
+def test_https_to_a_remote_host_is_fine() -> None:
+    respx.post("https://api.example.org/api/measurements").mock(return_value=created())
+    respx.get("https://api.example.org/api/series/3").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    result = runner.invoke(
+        cli.app, ["--api-url", "https://api.example.org", "--api-key", KEY, "send", "--value", "1"]
+    )
+    assert result.exit_code == 0
+    assert "unencrypted" not in result.stderr
+
+
+def test_dry_run_sends_nothing_so_it_may_name_any_host() -> None:
+    result = runner.invoke(cli.app, ["--api-url", REMOTE_HTTP, "--dry-run", "send", "--value", "1"])
+    assert result.exit_code == 0
 
 
 def test_main_maps_click_usage_errors_to_64(monkeypatch: pytest.MonkeyPatch) -> None:

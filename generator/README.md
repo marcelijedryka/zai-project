@@ -24,6 +24,9 @@ uv run --project generator zai-sensor --help
   order). Prefer the variable or the prompt: a value on the command line shows up in the process list.
 - The **admin password** (only `seed`) comes from `ZAI_ADMIN_PASSWORD` or a hidden prompt, never from
   a flag.
+- **Plain `http://` is refused** unless the host is loopback (`localhost`, `127.0.0.0/8`, `::1`), because the
+  key and the admin password would travel unencrypted. Use `https://`; `--allow-insecure` overrides
+  this (e.g. a compose-internal hostname). The check runs before anything is sent or asked for.
 - Nothing is hard-coded and keys are never logged, not even with `--verbose`. `seed` keeps the new
   sensor keys in memory; `--save-keys PATH` additionally writes them (mode 600).
 
@@ -37,6 +40,7 @@ uv run --project generator zai-sensor --help
 | `--retries N` | `3` | Retries on 429, 503 and connection errors (see below) |
 | `--verbose` | off | Log every request (never the key) |
 | `--dry-run` | off | Print what would be sent; sends nothing, needs no key |
+| `--allow-insecure` | off | Allow plain `http://` to a non-local host (see below) |
 
 ## Commands
 

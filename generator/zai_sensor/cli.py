@@ -5,6 +5,7 @@ Exit codes: 0 success; 1 some values were rejected (422) or failed after the ret
 admin login, invalid seed file); 64 invalid command line.
 """
 
+import ipaddress
 import math
 import os
 import sys
@@ -68,6 +69,7 @@ class Globals:
     retries: int
     reporter: Reporter
     dry_run: bool
+    allow_insecure: bool = False
 
 
 def fail(message: str, code: int = EXIT_USAGE) -> NoReturn:
@@ -113,6 +115,14 @@ def global_options(
     ] = 3,
     verbose: Annotated[bool, typer.Option("--verbose", help="Log requests (never keys)")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be sent")] = False,
+    allow_insecure: Annotated[
+        bool,
+        typer.Option(
+            "--allow-insecure",
+            help="Allow plain http:// to a non-local host (keys and the admin password would "
+            "travel unencrypted; by default only localhost / loopback may use http)",
+        ),
+    ] = False,
 ) -> None:
     ctx.obj = Globals(
         api_url=api_url,
@@ -121,22 +131,40 @@ def global_options(
         retries=retries,
         reporter=Reporter(verbose=verbose),
         dry_run=dry_run,
+        allow_insecure=allow_insecure,
     )
 
 
-def _client(g: Globals) -> ApiClient:
+def _is_loopback(host: str) -> bool:
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _check_url(g: Globals) -> str:
+    """The API URL, or exit 64. Plain http is refused for non-loopback hosts (credentials would
+    travel in the clear) unless ``--allow-insecure``; a dry run sends nothing, so it may pass."""
     if not g.api_url:
         fail("no API URL: pass --api-url or set ZAI_API_URL")
     parsed = urlparse(g.api_url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         fail("--api-url must be an http(s) URL")
-    if parsed.scheme == "http" and parsed.hostname not in {
-        "localhost",
-        "127.0.0.1",
-        "::1",
-    }:
-        g.reporter.warning("the API URL is plain http: keys and passwords travel unencrypted")
-    return ApiClient(g.api_url, timeout=g.timeout, retries=g.retries, log=g.reporter.debug)
+    if parsed.scheme == "http" and not _is_loopback(parsed.hostname) and not g.dry_run:
+        if not g.allow_insecure:
+            fail(
+                "refusing plain http:// to a non-local host: the sensor key and the admin "
+                "password would be sent unencrypted. Use https://, or pass --allow-insecure "
+                "if you really mean it."
+            )
+        g.reporter.warning("plain http: keys and passwords travel unencrypted (--allow-insecure)")
+    return g.api_url
+
+
+def _client(g: Globals) -> ApiClient:
+    return ApiClient(_check_url(g), timeout=g.timeout, retries=g.retries, log=g.reporter.debug)
 
 
 def _key(g: Globals) -> str:
@@ -497,6 +525,7 @@ def seed(
             g.reporter.info(f"- {item.name}: {seed_config.days * 24} hourly points ({origin})")
         g.reporter.info("dry run: nothing was sent")
         raise typer.Exit(EXIT_OK)
+    _check_url(g)  # before the password is asked for
     password = os.environ.get("ZAI_ADMIN_PASSWORD") or typer.prompt(
         f"Password of {admin_user}", hide_input=True
     )
