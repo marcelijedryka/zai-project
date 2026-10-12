@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: dev down test lint fmt migrate schema-sql seed contract-test create-admin
+.PHONY: dev down test lint fmt migrate schema-sql seed contract-test create-admin e2e
 
 .env:
 	cp .env.example .env
@@ -43,3 +43,6 @@ seed: ## TEMPORARY sample data via the API (ZAI_ADMIN_PASSWORD=... make seed); P
 contract-test: ## Official suite, E1 stage: ADMIN_PASSWORD=... make contract-test
 	@test -n "$$ADMIN_PASSWORD" || { echo "Set ADMIN_PASSWORD in the environment"; exit 1; }
 	node contract/zai-tests.mjs --app http://localhost:8000 --user "$${ADMIN_USER:-admin}" --pass "$$ADMIN_PASSWORD" --stage E1
+
+e2e: ## Official suite (E1 + E2) against a fresh runtime-image stack, like CI (stop `make dev` first)
+	scripts/e2e.sh

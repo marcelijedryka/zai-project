@@ -1,0 +1,10 @@
+# CI / `make e2e` overlay: the production image (`runtime` target) instead of the dev one.
+# Use with: docker compose -f docker-compose.yml -f compose.ci.yml up -d --build --wait
+services:
+  db:
+    ports: !reset [] # nothing on the host: a local dev stack may already own 5432
+  api:
+    build:
+      context: ./backend
+      target: runtime # no bind mount, no reload; the image does not migrate on start (Phase 3)
+    volumes: !reset []
