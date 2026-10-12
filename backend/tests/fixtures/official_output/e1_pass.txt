@@ -1,0 +1,29 @@
+
+[A1/A2] kontrakt
+  ✔ GET /api/health zwraca 200 i {"status":"ok"}
+  ✔ GET /api/series zwraca tablicę JSON (publicznie)
+  ✔ Dane przykładowe: co najmniej 3 serie po co najmniej 15 wyników (F11)
+  ✔ POST /api/auth/login zwraca token Bearer
+  ✔ POST /api/series tworzy serię (201 + Location)
+  ✔ GET na adres z Location zwraca utworzoną serię
+  ✔ PUT /api/series/{id} aktualizuje serię (200)
+  ✔ POST /api/sensors rejestruje czujnik i zwraca klucz API (201 + Location)
+  ✔ GET /api/sensors i /api/sensors/{id} zwracają czujnik bez klucza API
+  ✔ POST /api/measurements kluczem czujnika zapisuje wynik (201 + Location)
+  ✔ Wynik bez timestamp otrzymuje bieżący czas serwera
+  ✔ GET na adres z Location zwraca zapisany wynik
+  ✔ GET /api/measurements?series= zwraca wyniki posortowane rosnąco
+  ✔ Filtrowanie from/to jest domknięte
+  ✔ Filtr series obsługuje kilka serii naraz
+  ✔ sort=-timestamp zwraca wyniki malejąco
+  ✔ PUT serii z przedziałem wykluczającym istniejące wyniki zwraca 409
+  ✔ Nieistniejąca seria: 404 w formacie Problem Details
+  ✔ Accept: application/xml zwraca 406
+  ✔ Treść text/plain zwraca 415
+  ✔ Wyrejestrowanie czujnika: 204, klucz przestaje działać, wyniki pozostają
+  ✔ DELETE serii usuwa ją razem z wynikami i czujnikami
+  ✔ POST /api/auth/logout unieważnia token
+
+=== Etap E1: 10 pkt (część automatyczna)
+    A1/A2 kontrakt: 10
+Wynik jest orientacyjny; ocenę wystawia się na podstawie uruchomienia po terminie.

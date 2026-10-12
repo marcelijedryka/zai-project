@@ -54,3 +54,25 @@ jobs:
         working-directory: backend
       - run: uv run pytest --cov
         working-directory: backend
+
+  e2e:
+    needs: [lint, backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Create .env (CI-only secrets)
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-only-password/' .env
+      # Builds the runtime image, migrates, creates the admin, seeds, runs the official script
+      # (stages E1 and E2) and fails on any unexpected failure; dumps the compose logs on error.
+      - run: scripts/e2e.sh
+        env:
+          ZAI_ADMIN_PASSWORD: ci-only-admin-password

@@ -32,6 +32,7 @@ ZAI_ADMIN_PASSWORD=... make seed  # TEMPORARY sample data, sent through the API 
 make test                         # pytest against a real TimescaleDB, coverage gate 85 %
 make lint                         # ruff + mypy (strict)
 ADMIN_PASSWORD=... make contract-test   # the official suite, stage E1
+make e2e                          # what CI runs: fresh runtime-image stack + official suite (E1 + E2)
 ```
 
 Interactive API docs (dev only): <http://localhost:8000/api/docs>.
@@ -50,6 +51,13 @@ throttle, which is why repeated runs of the official script do not lock it.
 Past measurement timestamps are accepted back to `EARLIEST_MEASUREMENT_TIMESTAMP`
 (default 2000-01-01, configurable); older ones get 422. This is a deliberate limit on the
 contract's "past timestamps are allowed", see the deviations below.
+
+`make e2e` builds the production (`runtime`) image in its own compose project (`zai-e2e`, throw-away
+volume), migrates, creates an admin, seeds, runs the official script for E1 and E2 and fails on any
+`✘` (the script itself always exits 0, so `backend/scripts/check_official_output.py` parses its
+output). Port 8000 must be free: run `make down` first. The stack runs with `ENVIRONMENT=prod`.
+`--allow-deployment-only` is for these local runs only: the pre-submission run against the
+deployed stack uses the plain checker and expects zero failures.
 
 Locally, three E2 checks cannot pass: HTTPS, the http-to-https redirect and the SPA's
 Content-Security-Policy need the public deployment.
