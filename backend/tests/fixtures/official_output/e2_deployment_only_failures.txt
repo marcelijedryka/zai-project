@@ -1,0 +1,63 @@
+
+[A1/A2] kontrakt
+  ✔ GET /api/health zwraca 200 i {"status":"ok"}
+  ✔ GET /api/series zwraca tablicę JSON (publicznie)
+  ✔ Dane przykładowe: co najmniej 3 serie po co najmniej 15 wyników (F11)
+  ✔ POST /api/auth/login zwraca token Bearer
+  ✔ POST /api/series tworzy serię (201 + Location)
+  ✔ GET na adres z Location zwraca utworzoną serię
+  ✔ PUT /api/series/{id} aktualizuje serię (200)
+  ✔ POST /api/sensors rejestruje czujnik i zwraca klucz API (201 + Location)
+  ✔ GET /api/sensors i /api/sensors/{id} zwracają czujnik bez klucza API
+  ✔ POST /api/measurements kluczem czujnika zapisuje wynik (201 + Location)
+  ✔ Wynik bez timestamp otrzymuje bieżący czas serwera
+  ✔ GET na adres z Location zwraca zapisany wynik
+  ✔ GET /api/measurements?series= zwraca wyniki posortowane rosnąco
+  ✔ Filtrowanie from/to jest domknięte
+  ✔ Filtr series obsługuje kilka serii naraz
+  ✔ sort=-timestamp zwraca wyniki malejąco
+  ✔ PUT serii z przedziałem wykluczającym istniejące wyniki zwraca 409
+  ✔ Nieistniejąca seria: 404 w formacie Problem Details
+  ✔ Accept: application/xml zwraca 406
+  ✔ Treść text/plain zwraca 415
+  ✔ Wyrejestrowanie czujnika: 204, klucz przestaje działać, wyniki pozostają
+  ✔ DELETE serii usuwa ją razem z wynikami i czujnikami
+  ✔ POST /api/auth/logout unieważnia token
+
+[A3] walidacja
+  ✔ Wartość spoza przedziału serii: 422 i brak zapisu
+  ✔ Wartości graniczne min i max są akceptowane
+  ✔ Znacznik czasu z przyszłości (+1 h): 422
+  ✔ Seria z minValue ≥ maxValue: 422
+  ✔ Niepoprawne typy i brak pól: 400 lub 422
+  ✔ Niepoprawny JSON: 400
+  ✔ Niepoprawny parametr from: 400
+  ✔ Rejestracja czujnika dla nieistniejącej serii: 422
+  ✔ Operacje administracyjne bez tokenu: 401
+  ✔ Wynik bez klucza, z błędnym kluczem lub tylko z tokenem administratora: 401
+  ✔ Wyników nie można modyfikować ani usuwać (404 lub 405)
+  ✔ Sfałszowany token: 401
+  ✔ Logowanie błędnym hasłem: 401
+  ✔ Zmiana hasła z błędnym bieżącym hasłem: 403; bez tokenu: 401
+
+[A4] bezpieczenstwo
+  ✘ Aplikacja i API działają przez HTTPS
+      → Adres aplikacji i API musi zaczynać się od https://
+  ✘ Wejście przez http:// przekierowuje na https:// (lub port 80 jest zamknięty)
+      → Oczekiwano przekierowania na https://, otrzymano 404
+  ✘ Strona główna wysyła nagłówek Content-Security-Policy
+      → GET strony głównej: oczekiwano 200, otrzymano 406
+  ✔ API wysyła X-Content-Type-Options: nosniff
+  ✔ Ciasteczka ustawiane przy logowaniu mają HttpOnly, Secure i SameSite
+  ✔ Odpowiedzi API nie ujawniają haseł, ich skrótów ani kluczy czujników
+  ✔ CORS nie wpuszcza dowolnej domeny z poświadczeniami
+  ✔ Odpowiedzi błędów nie zawierają śladów stosu
+
+[A5] Lighthouse pominięty (dodaj --lighthouse); sprawdź wynik w DevTools → Lighthouse
+
+=== Etap E2: 11.9 pkt (część automatyczna)
+    A1/A2 kontrakt: 6
+    A3 walidacja: 4
+    A4 bezpieczenstwo: 1.9
+    A5 lighthouse: —
+Wynik jest orientacyjny; ocenę wystawia się na podstawie uruchomienia po terminie.

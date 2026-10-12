@@ -1,0 +1,1 @@
+  ✘ Aplikacja niedostępna pod http://localhost:8000/api/health
