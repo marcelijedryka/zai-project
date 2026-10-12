@@ -1,0 +1,62 @@
+[project]
+name = "zai-sensor"
+version = "0.1.0"
+description = "Sensor emulator and sample-data seeder for the ZAI 26Z measurement API"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28.1",
+    "rich>=15.0.0",
+    "typer>=0.27.2",
+]
+
+[project.scripts]
+zai-sensor = "zai_sensor.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# Only resolve releases at least two weeks old (project rule, same as the backend).
+exclude-newer = "2026-09-27T00:00:00Z"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
+    "ruff>=0.16.9",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+
+[tool.coverage.run]
+source = ["zai_sensor"]
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "ASYNC", "SIM", "C4", "RUF", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+# The sample-series names use the en dash and NO₂ of the plan, so tests must spell them too.
+"tests/**" = ["S101", "S105", "S106", "S107", "RUF001", "PT018"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["zai_sensor", "tests"]
