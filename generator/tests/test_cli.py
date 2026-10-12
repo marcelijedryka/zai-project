@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+import typer
 from typer.testing import CliRunner
 
 from zai_sensor import cli
@@ -550,3 +551,19 @@ def test_seed_prompts_for_the_admin_password_hidden() -> None:
     )
     assert json.loads(login.calls.last.request.content)["password"] == "typed-pw"
     assert "typed-pw" not in result.output
+
+
+def test_abort_at_a_prompt_is_a_quiet_exit_130(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def refuse(*_: object, **__: object) -> str:
+        raise typer.Abort
+
+    monkeypatch.setattr(typer, "prompt", refuse)
+    monkeypatch.setattr(sys, "argv", ["zai-sensor", "--api-url", URL, "send", "--value", "1"])
+    with pytest.raises(SystemExit) as raised:
+        cli.main()
+    assert raised.value.code == 130
+    captured = capsys.readouterr()
+    assert "Aborted." in captured.err
+    assert "Traceback" not in captured.err

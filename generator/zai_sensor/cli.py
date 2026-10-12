@@ -1,8 +1,9 @@
 """``zai-sensor``: send, backfill or stream measurements, and seed the sample data.
 
-Exit codes: 0 success; 1 some values were rejected (422) or failed after the retries;
-2 the sensor key was refused (401); 3 a fatal error (API or data source unreachable, bad
-admin login, invalid seed file); 64 invalid command line.
+Exit codes: 0 success; 1 some values were rejected (422) or failed after the retries (in
+``seed`` also a series whose data source failed); 2 the sensor key was refused (401); 3 a fatal
+error before anything was sent (API or data source unreachable, bad admin login, invalid seed
+file); 64 invalid command line; 130 aborted (Ctrl+C, or end of input at a prompt).
 """
 
 import ipaddress
@@ -38,12 +39,13 @@ from zai_sensor.seed import ConfigError, load_config, run_seed
 from zai_sensor.sender import send_points
 from zai_sensor.sources.open_meteo import MAX_PAST_DAYS, WARSAW, OpenMeteo, SourceError
 
-EXIT_OK, EXIT_PARTIAL, EXIT_KEY, EXIT_FATAL, EXIT_USAGE = 0, 1, 2, 3, 64
+EXIT_OK, EXIT_PARTIAL, EXIT_KEY, EXIT_FATAL, EXIT_USAGE, EXIT_ABORTED = 0, 1, 2, 3, 64, 130
 
 EXIT_CODES_HELP = (
-    "Exit codes: 0 all accepted; 1 some values rejected (422) or failed; "
-    "2 sensor key rejected (401); 3 fatal error (API/source unreachable, bad admin login, "
-    "invalid seed file); 64 invalid command line."
+    "Exit codes: 0 all accepted; 1 some values rejected (422) or failed (in seed also a series "
+    "whose data source failed); 2 sensor key rejected (401); 3 fatal error before anything was "
+    "sent (API/source unreachable, bad admin login, invalid seed file); 64 invalid command line; "
+    "130 aborted (Ctrl+C, or end of input at a prompt)."
 )
 
 app = typer.Typer(
@@ -553,6 +555,11 @@ def seed(
         f"Done: {len(result.created)} series created, {len(result.skipped)} skipped, "
         f"{len(result.errors)} with source errors"
     )
+    if result.revoked:
+        g.reporter.info(
+            f"Unregistered {result.revoked} seed sensors (their keys were never shown); "
+            "use --save-keys to keep them"
+        )
     g.reporter.summary(total)
     raise typer.Exit(result.exit_code)
 
@@ -561,6 +568,9 @@ def main() -> None:
     """Console entry point. Usage errors exit 64: 2 is reserved for 'sensor key rejected'."""
     try:
         code = app(standalone_mode=False)
+    except typer.Abort:  # Ctrl+C or end of input at a prompt: no traceback
+        typer.secho("Aborted.", err=True, fg=typer.colors.YELLOW)
+        sys.exit(EXIT_ABORTED)
     except Exception as exc:  # click usage errors (typer bundles click): show, then map the code
         show = getattr(exc, "show", None)
         if getattr(exc, "exit_code", None) != 2 or not callable(show):

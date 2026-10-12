@@ -42,7 +42,7 @@ schema-sql: ## Regenerate db/schema.sql (offline Alembic); the old file is kept 
 	cd backend && uv run alembic upgrade head --sql > ../db/schema.sql.tmp
 	mv db/schema.sql.tmp db/schema.sql
 
-seed: ## Sample data (F11) through the API: ZAI_ADMIN_PASSWORD=... make seed [SEED_ARGS="--source synthetic"]
+seed: ## Sample data (F11) via the API, real Open-Meteo data (internet); offline: SEED_ARGS="--source synthetic"
 	uv run --frozen --project generator zai-sensor --api-url "$${ZAI_API_URL:-http://localhost:8000}" \
 		seed --config generator/seed.example.toml --admin-user "$${ADMIN_USERNAME:-admin}" $(SEED_ARGS)
 
