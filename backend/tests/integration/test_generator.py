@@ -42,6 +42,9 @@ async def test_seed_fills_the_app_through_the_api_and_is_repeatable(
     series = await list_series(server)
     assert len(series) == 5
     assert not any(s["name"].upper().startswith("ZAI-TEST-") for s in series)  # F11 / pitfall 10
+    assert {s["description"] for s in series} == {
+        "Synthetic sample data"
+    }  # never passed off as real
     now = datetime.now(UTC)
     for item in series:
         data = await points(server, item["id"])
@@ -59,10 +62,28 @@ async def test_seed_fills_the_app_through_the_api_and_is_repeatable(
 
     again = await seed(server, admin, days=14)
     assert again.exit_code == 0, again.output
-    assert "already has data, skipped" in again.stdout
+    assert "already up to date, skipped" in again.stdout
     assert len(await list_series(server)) == 5
     for item in series:
         assert len(await points(server, item["id"])) == 14 * 24  # nothing duplicated
+
+
+async def test_seed_without_save_keys_leaves_no_usable_sensor_behind(
+    server: str, admin: Admin
+) -> None:
+    result = await seed(server, admin)
+    assert result.exit_code == 0, result.output
+    assert "Unregistered 5 seed sensors" in result.stdout
+    async with httpx.AsyncClient(base_url=server) as client:
+        login = await client.post(
+            "/api/auth/login", json={"username": admin.username, "password": admin.password}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['accessToken']}"}
+        assert (await client.get("/api/sensors", headers=headers)).json() == []
+    series = await list_series(server)
+    data = await points(server, series[0]["id"])
+    assert len(data) == 2 * 24
+    assert all(p["sensorId"] is not None for p in data)  # provenance survives the unregistering
 
 
 async def test_seed_logs_out_and_rejects_a_wrong_admin_password(server: str, admin: Admin) -> None:

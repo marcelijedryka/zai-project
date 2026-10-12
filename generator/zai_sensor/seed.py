@@ -53,6 +53,7 @@ class SeedResult:
     skipped: list[str] = field(default_factory=list)
     summaries: dict[str, Summary] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    revoked: int = 0  # seed sensors unregistered at the end
 
     @property
     def exit_code(self) -> int:
@@ -183,6 +184,10 @@ def build_points(
     return points[-count:]
 
 
+DESCRIPTION_OPEN_METEO = "Source: Open-Meteo (CC BY 4.0)"
+DESCRIPTION_SYNTHETIC = "Synthetic sample data"
+
+
 def run_seed(
     client: ApiClient,
     config: SeedConfig,
@@ -196,45 +201,67 @@ def run_seed(
     keys_path: Path | None = None,
 ) -> SeedResult:
     """Seed through the public API. Raises :class:`ApiError` if the admin login or a setup call
-    fails; problems with one series' data are collected in ``errors`` and the rest continues."""
+    fails; problems with one series' data are collected in ``errors`` and the rest continues.
+
+    A series is only sent the points *newer than its newest stored one*: a complete series is
+    left alone (idempotent) and an interrupted run is continued, never duplicated. The sensors
+    created here are unregistered at the end (their keys were never shown to anyone, so they
+    would be live credentials nobody holds) unless ``keys_path`` asks to keep the keys.
+    """
     now = now or datetime.now(UTC)
     result = SeedResult()
-    keys: dict[str, str] = {}  # in memory only, unless ``keys_path`` is given
+    keys: dict[str, str] = {}
+    sensor_ids: list[int] = []
     source = open_meteo or OpenMeteo(latitude=config.latitude, longitude=config.longitude)
     token = client.login(username, password)
     try:
-        existing = {item["name"]: item for item in client.list_series()}
+        # The server compares names case-insensitively, so must we (else: 409 on create).
+        existing = {item["name"].lower(): item for item in client.list_series()}
         for spec in config.series:
-            item = existing.get(spec.name)
+            real = not synthetic_only and spec.variable is not None
+            item = existing.get(spec.name.lower())
             if item is None:
-                item = client.create_series(token, _series_body(spec))
+                item = client.create_series(token, _series_body(spec, real=real))
                 result.created.append(spec.name)
-            if client.series_stats(item["id"])["count"] > 0:
-                reporter.info(f"  {spec.name}: already has data, skipped")
-                result.skipped.append(spec.name)
-                continue
+            stats = client.series_stats(item["id"])
+            have_data = stats["count"] > 0
             try:
                 points = build_points(
                     spec, config, now, synthetic_only=synthetic_only, open_meteo=source
                 )
             except SourceError as exc:
-                result.errors[spec.name] = str(exc)
-                reporter.error(f"{spec.name}: {exc}")
+                if have_data:  # nothing is missing that we could know of: not a failure
+                    reporter.warning(f"{spec.name}: cannot check for newer data ({exc}); skipped")
+                    result.skipped.append(spec.name)
+                else:
+                    result.errors[spec.name] = str(exc)
+                    reporter.error(f"{spec.name}: {exc}")
                 continue
+            newest = _parse_stamp(stats.get("lastTimestamp")) if have_data else None
+            if newest is not None:
+                points = [p for p in points if p.timestamp is not None and p.timestamp > newest]
             if not points:
-                result.errors[spec.name] = "the source returned no usable points"
-                reporter.error(f"{spec.name}: the source returned no usable points")
+                if have_data:
+                    reporter.info(f"  {spec.name}: already up to date, skipped")
+                    result.skipped.append(spec.name)
+                else:
+                    result.errors[spec.name] = "the source returned no usable points"
+                    reporter.error(f"{spec.name}: the source returned no usable points")
                 continue
             sensor = client.create_sensor(token, f"seed - {spec.name}", item["id"])
+            sensor_ids.append(sensor["id"])
             keys[spec.name] = sensor["apiKey"]
             summary = send_points(client, sensor["apiKey"], points, reporter, show_accepted=False)
             result.summaries[spec.name] = summary
-            reporter.info(f"  {spec.name}: {summary.line()}")
+            resumed = " (continued)" if newest is not None else ""
+            reporter.info(f"  {spec.name}: {summary.line()}{resumed}")
             if summary.key_rejected:
                 break
     finally:
         if keys_path is not None and keys:
             write_keys(keys_path, keys)
+        if keys_path is None:
+            result.revoked = _revoke(client, token, sensor_ids, reporter)
         try:
             client.logout(token)
         except ApiError:
@@ -242,12 +269,33 @@ def run_seed(
     return result
 
 
-def _series_body(spec: SeedSeries) -> dict[str, Any]:
+def _revoke(client: ApiClient, token: str, sensor_ids: list[int], reporter: Reporter) -> int:
+    revoked = 0
+    for sensor_id in sensor_ids:
+        try:
+            client.delete_sensor(token, sensor_id)
+            revoked += 1
+        except ApiError as exc:
+            reporter.warning(f"could not unregister seed sensor {sensor_id}: {exc}")
+    return revoked
+
+
+def _parse_stamp(raw: object) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        return datetime.fromisoformat(raw).astimezone(UTC)
+    except ValueError:
+        return None
+
+
+def _series_body(spec: SeedSeries, *, real: bool) -> dict[str, Any]:
     body: dict[str, Any] = {
         "name": spec.name,
         "minValue": spec.minimum,
         "maxValue": spec.maximum,
         "color": spec.color,
+        "description": DESCRIPTION_OPEN_METEO if real else DESCRIPTION_SYNTHETIC,
     }
     if spec.icon:
         body["icon"] = spec.icon

@@ -208,6 +208,9 @@ class ApiClient:
         result: dict[str, Any] = self._admin("POST", "/api/series", token, json=body).json()
         return result
 
+    def delete_sensor(self, token: str, sensor_id: int) -> None:
+        self._admin("DELETE", f"/api/sensors/{sensor_id}", token)
+
     def series_unit(self, series_id: int) -> str:
         """The unit of a series (public endpoint); empty if unknown or unreachable."""
         try:
