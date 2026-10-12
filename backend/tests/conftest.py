@@ -1,8 +1,10 @@
+import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
 import httpx
 import pytest
+import uvicorn
 from fastapi import FastAPI
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -120,3 +122,26 @@ async def token(client: httpx.AsyncClient, admin: Admin) -> str:
 def auth(token: str) -> dict[str, str]:
     """``Authorization`` header for admin requests."""
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def server(settings: Settings, engine: AsyncEngine) -> Iterator[str]:
+    """The API on 127.0.0.1:<free port>, for clients that need real HTTP (the generator).
+
+    httpx's ASGITransport buffers whole responses, so streaming and synchronous clients need a
+    real server; it runs in a background thread. ``engine`` truncates the tables afterwards.
+    """
+    config = uvicorn.Config(create_app(settings), host="127.0.0.1", port=0, log_level="warning")
+    instance = uvicorn.Server(config)
+    thread = threading.Thread(target=instance.run, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if instance.started and instance.servers:
+            break
+        threading.Event().wait(0.05)
+    else:
+        pytest.fail("the test server did not start")
+    port = instance.servers[0].sockets[0].getsockname()[1]
+    yield f"http://127.0.0.1:{port}"
+    instance.should_exit = True
+    thread.join(timeout=10)

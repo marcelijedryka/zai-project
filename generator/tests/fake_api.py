@@ -12,7 +12,9 @@ class FakeApi:
     def __init__(self, *, password: str = "pw") -> None:
         self.password = password
         self.series: list[dict[str, Any]] = []
-        self.sensors: dict[str, int] = {}  # key -> series id
+        self.sensors: dict[str, int] = {}  # key -> series id (every key ever issued)
+        self.sensor_ids: dict[int, str] = {}  # sensor id -> key
+        self.revoked: set[str] = set()
         self.measurements: list[dict[str, Any]] = []
         self.logged_out = False
         self.calls: list[tuple[str, str]] = []
@@ -44,6 +46,8 @@ class FakeApi:
         if (method, path) == ("POST", "/api/series"):
             if not self._admin(request):
                 return httpx.Response(401, json={"title": "Unauthorized"})
+            if any(s["name"].lower() == body["name"].lower() for s in self.series):
+                return httpx.Response(409, json={"title": "Conflict", "detail": "name exists"})
             item = {"id": len(self.series) + 1, **body}
             self.series.append(item)
             return httpx.Response(201, json=item)
@@ -55,15 +59,25 @@ class FakeApi:
             if found is None:
                 return httpx.Response(404, json={"title": "Not Found"})
             if len(parts) == 5:
-                return httpx.Response(200, json={"count": self.count(found["id"])})
+                stamps = [m["timestamp"] for m in self.measurements if m["seriesId"] == found["id"]]
+                last = max(stamps) if stamps else None
+                return httpx.Response(200, json={"count": len(stamps), "lastTimestamp": last})
             return httpx.Response(200, json=found)
         if (method, path) == ("POST", "/api/sensors"):
             key = f"zai_key_{len(self.sensors) + 1}"
             self.sensors[key] = body["seriesId"]
+            self.sensor_ids[len(self.sensors)] = key
             return httpx.Response(201, json={"id": len(self.sensors), "apiKey": key, **body})
+        if method == "DELETE" and path.startswith("/api/sensors/"):
+            revoking = self.sensor_ids.get(int(path.rsplit("/", 1)[1]))
+            if revoking is None or revoking in self.revoked or not self._admin(request):
+                return httpx.Response(404, json={"title": "Not Found"})
+            self.revoked.add(revoking)
+            return httpx.Response(204)
         if (method, path) == ("POST", "/api/measurements"):
-            series_id = self.sensors.get(request.headers.get("x-api-key", ""))
-            if series_id is None:
+            presented = request.headers.get("x-api-key", "")
+            series_id = self.sensors.get(presented)
+            if series_id is None or presented in self.revoked:
                 return httpx.Response(401, json={"title": "Unauthorized"})
             series = self.series[series_id - 1]
             if not series["minValue"] <= body["value"] <= series["maxValue"]:

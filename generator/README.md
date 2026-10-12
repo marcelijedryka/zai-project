@@ -28,7 +28,8 @@ uv run --project generator zai-sensor --help
   key and the admin password would travel unencrypted. Use `https://`; `--allow-insecure` overrides
   this (e.g. a compose-internal hostname). The check runs before anything is sent or asked for.
 - Nothing is hard-coded and keys are never logged, not even with `--verbose`. `seed` keeps the new
-  sensor keys in memory; `--save-keys PATH` additionally writes them (mode 600).
+  sensor keys in memory and unregisters those sensors at the end; `--save-keys PATH` keeps the
+  sensors and writes the keys instead (mode 600).
 
 ## Global options (before the command)
 
@@ -76,8 +77,17 @@ zai-sensor ... live --interval 15m --source open-meteo --variable pm2_5    # lat
 ### `seed`: the sample data (F11)
 
 Logs in as admin, creates the series and one sensor per series through the API, then backfills
-about 14 days of hourly values with each sensor's own key, and logs out. Series that already hold
-data are skipped, so running it twice duplicates nothing.
+about 14 days of hourly values with each sensor's own key, and logs out.
+
+- **Repeatable and resumable:** a series is only sent the points *newer than its newest stored
+  one*. A complete series is skipped, an interrupted run is continued, nothing is duplicated.
+  Existing series are matched by name, ignoring case (the server does too).
+- **Labelled:** new series get a description: `Source: Open-Meteo (CC BY 4.0)` for real data, or
+  `Synthetic sample data` (the lab series, and every series seeded with `--source synthetic`).
+- **No orphaned credentials:** the sensors it creates are unregistered at the end, because nobody
+  ever sees their keys. Measurements keep their sensor reference. `--save-keys` keeps the sensors
+  and writes their keys instead.
+- Needs internet for the real data; offline use `--source synthetic`.
 
 ```bash
 ZAI_ADMIN_PASSWORD=... zai-sensor --api-url http://localhost:8000 seed --config generator/seed.example.toml
@@ -89,7 +99,7 @@ ZAI_ADMIN_PASSWORD=... zai-sensor --api-url http://localhost:8000 seed --config 
 | `--admin-user U` | `admin` | Admin username |
 | `--days N` | from the file (14) | History length |
 | `--source synthetic` | file | Use each series' own synthetic pattern instead of Open-Meteo (offline) |
-| `--save-keys PATH` | off | Also write `{series: key}` here, mode 600 (gitignored: `*.keys.json`) |
+| `--save-keys PATH` | off | Keep the sensors and write `{series: key}` here, mode 600 (gitignored: `*.keys.json`) |
 
 ### Synthetic pattern options (`backfill`, `live`)
 
@@ -129,10 +139,11 @@ sent=336 accepted=336 rejected=0 failed=0                   final summary
 | Exit code | Meaning |
 |---|---|
 | 0 | everything accepted |
-| 1 | some values rejected (422) or failed after the retries |
+| 1 | some values rejected (422) or failed after the retries; in `seed` also a series whose data source failed |
 | 2 | the sensor key was refused (401) |
-| 3 | fatal: API or data source unreachable, bad admin login, invalid seed file |
+| 3 | fatal before anything was sent: API or data source unreachable, bad admin login, invalid seed file |
 | 64 | invalid command line |
+| 130 | aborted: Ctrl+C, or end of input at a prompt |
 
 **Retries.** The API has no idempotency key, so a request that may have been stored is never
 repeated. Retried: connection errors (the request never left), 429 and 503, honouring

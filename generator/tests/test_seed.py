@@ -278,3 +278,121 @@ def test_keys_are_not_printed(config: SeedConfig, capsys: pytest.CaptureFixture[
     seed(api, config, synthetic_only=True)
     out = capsys.readouterr()
     assert not any(key in out.out + out.err for key in api.sensors)
+
+
+# --- review follow-ups: labels, orphaned sensors, resuming, case ----------------------------
+
+
+def test_series_are_labelled_with_their_real_source(config: SeedConfig) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        variable = request.url.params["hourly"]
+        return httpx.Response(200, json={"hourly": {"time": ["2026-10-11T10:00"], variable: [5.0]}})
+
+    api = FakeApi()
+    seed(api, config, open_meteo=meteo(handler))
+    labels = {s["name"]: s["description"] for s in api.series}
+    assert labels["Warsaw – PM10"] == "Source: Open-Meteo (CC BY 4.0)"
+    assert labels["Lab – Indoor temperature (synthetic)"] == "Synthetic sample data"
+
+
+def test_synthetic_fallback_never_claims_to_be_open_meteo_data(config: SeedConfig) -> None:
+    api = FakeApi()
+    seed(api, config, synthetic_only=True)
+    assert {s["description"] for s in api.series} == {"Synthetic sample data"}
+
+
+def test_seed_sensors_are_unregistered_at_the_end(config: SeedConfig) -> None:
+    api = FakeApi()
+    result = seed(api, config, synthetic_only=True)
+    assert result.revoked == 5
+    assert api.revoked == set(api.sensors)  # no usable credential is left behind
+    assert len(api.measurements) == 5 * 14 * 24  # the data stays
+    assert api.logged_out
+
+
+def test_save_keys_keeps_the_sensors(config: SeedConfig, tmp_path: Path) -> None:
+    api = FakeApi()
+    result = seed(api, config, synthetic_only=True, keys_path=tmp_path / "k.json")
+    assert result.revoked == 0
+    assert api.revoked == set()
+
+
+def test_sensors_are_unregistered_even_when_the_run_fails_midway(config: SeedConfig) -> None:
+    api = FakeApi()
+    original = api.handle
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == "/api/series" and len(api.series) == 2:
+            return httpx.Response(500, json={"title": "boom", "detail": "boom"})
+        return original(request)
+
+    api.handle = handle  # type: ignore[method-assign]
+    with pytest.raises(ApiError):
+        seed(api, config, synthetic_only=True)
+    assert len(api.sensors) == 2
+    assert api.revoked == set(api.sensors)
+    assert api.logged_out
+
+
+def test_an_interrupted_run_is_continued_without_duplicates(config: SeedConfig) -> None:
+    api = FakeApi()
+    seed(api, config, synthetic_only=True)
+    full = len(api.measurements)
+    first = [m for m in api.measurements if m["seriesId"] == 1]
+    # Simulate a run that died after 100 points of the first series (and never reached the others).
+    api.measurements = first[:100]
+    api.series = api.series[:1]
+    api.sensors, api.sensor_ids, api.revoked = {}, {}, set()
+
+    result = seed(api, config, synthetic_only=True)
+    assert result.skipped == []
+    assert api.count(1) == 14 * 24  # completed ...
+    stamps = [m["timestamp"] for m in api.measurements if m["seriesId"] == 1]
+    assert len(set(stamps)) == len(stamps)  # ... without a duplicate
+    assert len(api.measurements) == full
+
+
+def test_a_complete_series_is_up_to_date_and_creates_no_sensor(config: SeedConfig) -> None:
+    api = FakeApi()
+    seed(api, config, synthetic_only=True)
+    sensors = len(api.sensors)
+    again = seed(api, config, synthetic_only=True)
+    assert again.skipped == [s.name for s in config.series]
+    assert len(api.sensors) == sensors
+    assert again.revoked == 0
+
+
+def test_a_newer_hour_is_added_on_a_later_run(config: SeedConfig) -> None:
+    api = FakeApi()
+    seed(api, config, synthetic_only=True)
+    before = len(api.measurements)
+    client = ApiClient("http://api.test", transport=api.transport())
+    run_seed(
+        client, config, "admin", "pw", Reporter(), now=NOW + timedelta(hours=2), synthetic_only=True
+    )
+    assert len(api.measurements) == before + 5 * 2  # two new hours per series, nothing repeated
+
+
+def test_existing_series_are_matched_ignoring_case(config: SeedConfig) -> None:
+    api = FakeApi()
+    api.series.append(
+        {"id": 1, "name": "WARSAW – air temperature", "minValue": -40, "maxValue": 50}
+    )
+    result = seed(api, config, synthetic_only=True)  # a case-sensitive match would get a 409
+    assert "Warsaw – Air temperature" not in result.created
+    assert len(api.series) == 5
+    assert api.count(1) == 14 * 24
+
+
+def test_an_unreachable_source_is_not_a_failure_for_a_series_that_has_data(
+    config: SeedConfig,
+) -> None:
+    api = FakeApi()
+    seed(api, config, synthetic_only=True)
+
+    def down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="down")
+
+    result = seed(api, config, open_meteo=meteo(down))
+    assert result.errors == {}
+    assert result.exit_code == 0

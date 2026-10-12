@@ -47,8 +47,9 @@ echo "==> migrating"
 echo "==> creating the admin"
 "${compose[@]}" exec -T -e ZAI_ADMIN_PASSWORD api python -m app.cli create-admin --username admin
 
-echo "==> seeding the sample data (F11)"
-make --no-print-directory seed ZAI_API_URL="$api_url"
+echo "==> seeding the sample data through the generator (F11)"
+# Synthetic (offline) so the job never depends on Open-Meteo being up; `make seed` uses real data.
+make --no-print-directory seed ZAI_API_URL="$api_url" SEED_ARGS="--source synthetic"
 
 for stage in E1 E2; do
   echo "==> official suite, stage $stage"

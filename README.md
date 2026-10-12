@@ -28,7 +28,8 @@ Node 22 (only for the official test script).
 make dev                          # creates .env, starts TimescaleDB + the API (http://localhost:8000)
 make migrate                      # apply the Alembic migrations
 make create-admin                 # create the admin account (hidden password prompt)
-ZAI_ADMIN_PASSWORD=... make seed  # TEMPORARY sample data, sent through the API only
+ZAI_ADMIN_PASSWORD=... make seed  # sample data (F11) via `zai-sensor seed`: real Open-Meteo data (needs internet)
+                                  # offline: ZAI_ADMIN_PASSWORD=... make seed SEED_ARGS="--source synthetic"
 make test                         # pytest against a real TimescaleDB, coverage gate 85 %
 make lint                         # ruff + mypy (strict)
 ADMIN_PASSWORD=... make contract-test   # the official suite, stage E1

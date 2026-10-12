@@ -1,67 +1,23 @@
 """The ``zai-sensor`` CLI against the real application (real HTTP, real Timescale database).
 
-The server runs in a background thread on a free port (httpx's ASGITransport buffers whole
-responses and the generator is a plain synchronous HTTP client). Covers F11 (`seed`), F13
+The ``server`` fixture (tests/conftest.py) runs the app in a background thread on a free port
+(the generator is a plain synchronous HTTP client). Covers F11 (`seed`), F13
 (`backfill`, `live`, `send`) and F4 (the rejection demo) end to end.
 """
 
-import asyncio
 import json
 import stat
-import threading
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
-import pytest
 import respx
-import uvicorn
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from typer.testing import CliRunner
-from zai_sensor import cli
 
-from app.config import Settings
-from app.main import create_app
 from tests.conftest import Admin
-
-SEED_FILE = Path(__file__).parents[3] / "generator" / "seed.example.toml"
-runner = CliRunner()
-
-
-@pytest.fixture
-def server(settings: Settings, engine: AsyncEngine) -> Iterator[str]:
-    """The API on 127.0.0.1:<free port>; ``engine`` truncates the tables afterwards."""
-    config = uvicorn.Config(create_app(settings), host="127.0.0.1", port=0, log_level="warning")
-    instance = uvicorn.Server(config)
-    thread = threading.Thread(target=instance.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if instance.started and instance.servers:
-            break
-        threading.Event().wait(0.05)
-    else:
-        pytest.fail("the test server did not start")
-    port = instance.servers[0].sockets[0].getsockname()[1]
-    yield f"http://127.0.0.1:{port}"
-    instance.should_exit = True
-    thread.join(timeout=10)
-
-
-async def generator(url: str, *args: str, env: dict[str, str] | None = None) -> Any:
-    """Run the CLI in a worker thread so the test's event loop stays free."""
-    return await asyncio.to_thread(runner.invoke, cli.app, ["--api-url", url, *args], env=env)
-
-
-async def seed(url: str, admin: Admin, *extra: str, days: int = 2) -> Any:
-    return await generator(
-        url,
-        "seed", "--config", str(SEED_FILE), "--admin-user", admin.username, "--source", "synthetic",
-        "--days", str(days), *extra,
-        env={"ZAI_ADMIN_PASSWORD": admin.password},
-    )  # fmt: skip
+from tests.generator_utils import SEED_FILE, generator, seed
 
 
 async def list_series(url: str) -> list[dict[str, Any]]:
@@ -86,6 +42,9 @@ async def test_seed_fills_the_app_through_the_api_and_is_repeatable(
     series = await list_series(server)
     assert len(series) == 5
     assert not any(s["name"].upper().startswith("ZAI-TEST-") for s in series)  # F11 / pitfall 10
+    assert {s["description"] for s in series} == {
+        "Synthetic sample data"
+    }  # never passed off as real
     now = datetime.now(UTC)
     for item in series:
         data = await points(server, item["id"])
@@ -103,10 +62,28 @@ async def test_seed_fills_the_app_through_the_api_and_is_repeatable(
 
     again = await seed(server, admin, days=14)
     assert again.exit_code == 0, again.output
-    assert "already has data, skipped" in again.stdout
+    assert "already up to date, skipped" in again.stdout
     assert len(await list_series(server)) == 5
     for item in series:
         assert len(await points(server, item["id"])) == 14 * 24  # nothing duplicated
+
+
+async def test_seed_without_save_keys_leaves_no_usable_sensor_behind(
+    server: str, admin: Admin
+) -> None:
+    result = await seed(server, admin)
+    assert result.exit_code == 0, result.output
+    assert "Unregistered 5 seed sensors" in result.stdout
+    async with httpx.AsyncClient(base_url=server) as client:
+        login = await client.post(
+            "/api/auth/login", json={"username": admin.username, "password": admin.password}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['accessToken']}"}
+        assert (await client.get("/api/sensors", headers=headers)).json() == []
+    series = await list_series(server)
+    data = await points(server, series[0]["id"])
+    assert len(data) == 2 * 24
+    assert all(p["sensorId"] is not None for p in data)  # provenance survives the unregistering
 
 
 async def test_seed_logs_out_and_rejects_a_wrong_admin_password(server: str, admin: Admin) -> None:
