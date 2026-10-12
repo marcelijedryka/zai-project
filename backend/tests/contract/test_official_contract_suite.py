@@ -18,8 +18,8 @@ from typing import Any
 import httpx
 import pytest
 
-from scripts.seed_temp import seed_sample_data
 from tests.conftest import Admin
+from tests.generator_utils import seed
 
 OFFICIAL_SCRIPT = Path(__file__).resolve().parents[3] / "contract" / "zai-tests.mjs"
 # SHA-256 of the official script this module was ported from. If the lecturer publishes a revised
@@ -171,9 +171,11 @@ async def test_kontrakt_02_series_list_is_a_public_json_array(
 
 @official("Dane przykładowe")
 async def test_kontrakt_03_sample_data_three_series_with_fifteen_points(
-    client: httpx.AsyncClient, admin: Admin
+    client: httpx.AsyncClient, admin: Admin, server: str
 ) -> None:
-    await seed_sample_data(client, admin.username, admin.password, days=1, log=lambda _: None)
+    # F11: the sample data comes from the generator, through the API (here: a real server).
+    result = await seed(server, admin, days=1)
+    assert result.exit_code == 0, result.output
     series = (await client.get("/api/series")).json()
     own = [s for s in series if not str(s["name"]).startswith(TEST_PREFIX)]
     full = 0

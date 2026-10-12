@@ -1,67 +1,23 @@
 """The ``zai-sensor`` CLI against the real application (real HTTP, real Timescale database).
 
-The server runs in a background thread on a free port (httpx's ASGITransport buffers whole
-responses and the generator is a plain synchronous HTTP client). Covers F11 (`seed`), F13
+The ``server`` fixture (tests/conftest.py) runs the app in a background thread on a free port
+(the generator is a plain synchronous HTTP client). Covers F11 (`seed`), F13
 (`backfill`, `live`, `send`) and F4 (the rejection demo) end to end.
 """
 
-import asyncio
 import json
 import stat
-import threading
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
-import pytest
 import respx
-import uvicorn
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from typer.testing import CliRunner
-from zai_sensor import cli
 
-from app.config import Settings
-from app.main import create_app
 from tests.conftest import Admin
-
-SEED_FILE = Path(__file__).parents[3] / "generator" / "seed.example.toml"
-runner = CliRunner()
-
-
-@pytest.fixture
-def server(settings: Settings, engine: AsyncEngine) -> Iterator[str]:
-    """The API on 127.0.0.1:<free port>; ``engine`` truncates the tables afterwards."""
-    config = uvicorn.Config(create_app(settings), host="127.0.0.1", port=0, log_level="warning")
-    instance = uvicorn.Server(config)
-    thread = threading.Thread(target=instance.run, daemon=True)
-    thread.start()
-    for _ in range(200):
-        if instance.started and instance.servers:
-            break
-        threading.Event().wait(0.05)
-    else:
-        pytest.fail("the test server did not start")
-    port = instance.servers[0].sockets[0].getsockname()[1]
-    yield f"http://127.0.0.1:{port}"
-    instance.should_exit = True
-    thread.join(timeout=10)
-
-
-async def generator(url: str, *args: str, env: dict[str, str] | None = None) -> Any:
-    """Run the CLI in a worker thread so the test's event loop stays free."""
-    return await asyncio.to_thread(runner.invoke, cli.app, ["--api-url", url, *args], env=env)
-
-
-async def seed(url: str, admin: Admin, *extra: str, days: int = 2) -> Any:
-    return await generator(
-        url,
-        "seed", "--config", str(SEED_FILE), "--admin-user", admin.username, "--source", "synthetic",
-        "--days", str(days), *extra,
-        env={"ZAI_ADMIN_PASSWORD": admin.password},
-    )  # fmt: skip
+from tests.generator_utils import SEED_FILE, generator, seed
 
 
 async def list_series(url: str) -> list[dict[str, Any]]:
