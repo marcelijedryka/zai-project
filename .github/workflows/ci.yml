@@ -59,8 +59,6 @@ jobs:
     needs: [lint, backend]
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      ZAI_ADMIN_PASSWORD: ci-only-admin-password
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,3 +74,5 @@ jobs:
       # Builds the runtime image, migrates, creates the admin, seeds, runs the official script
       # (stages E1 and E2) and fails on any unexpected failure; dumps the compose logs on error.
       - run: scripts/e2e.sh
+        env:
+          ZAI_ADMIN_PASSWORD: ci-only-admin-password

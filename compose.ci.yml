@@ -8,3 +8,5 @@ services:
       context: ./backend
       target: runtime # no bind mount, no reload; the image does not migrate on start (Phase 3)
     volumes: !reset []
+    environment:
+      ENVIRONMENT: prod # the production configuration (Swagger UI off), not the dev default of .env

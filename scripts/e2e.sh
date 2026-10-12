@@ -9,7 +9,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-zai-e2e}" # its own volume, not the dev DB
+# Hard-coded on purpose: the cleanup runs `down -v`, so a stray COMPOSE_PROJECT_NAME in the
+# shell must never point it at the dev stack and its database volume.
+export COMPOSE_PROJECT_NAME=zai-e2e
 compose=(docker compose -f docker-compose.yml -f compose.ci.yml)
 api_url="http://localhost:8000"
 out_dir="$(mktemp -d)"

@@ -79,7 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-deployment-only",
         action="store_true",
-        help="tolerate the 3 checks that need the public HTTPS deployment (stage E2)",
+        help="LOCAL runs only (stage E2, no HTTPS): tolerate the 3 checks that need the public "
+        "deployment. Never use it against the deployed stack, where they must pass.",
     )
     args = parser.parse_args(argv)
     if args.output:
