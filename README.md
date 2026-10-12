@@ -36,6 +36,17 @@ ADMIN_PASSWORD=... make contract-test   # the official suite, stage E1
 make e2e                          # what CI runs: fresh runtime-image stack + official suite (E1 + E2)
 ```
 
+Realtime updates (Server-Sent Events, public): watch new measurements arrive while a sensor runs.
+
+```bash
+curl -N -H 'Accept: text/event-stream' 'http://localhost:8000/api/measurements/stream?series=1,2'
+zai-sensor --api-url http://localhost:8000 live --interval 2s    # in a second terminal, with a sensor key
+```
+
+Events: `measurement` (the same JSON as `GET /api/measurements/{id}`), `series-changed`
+(`{"id", "action"}`), and a `: ping` comment every 15 s. Events are not replayed after a reconnect:
+refetch the range you display. At most 5 streams per client address (429 above).
+
 Interactive API docs (dev only): <http://localhost:8000/api/docs>.
 
 The official test script also runs directly:

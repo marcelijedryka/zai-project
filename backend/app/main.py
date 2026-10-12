@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, measurements, sensors, series
+from app.api import auth, health, measurements, sensors, series, stream
 from app.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import (
@@ -26,6 +26,7 @@ from app.core.problems import (
     validation_exception_handler,
 )
 from app.db import create_engine, create_session_factory
+from app.realtime.broadcaster import Broadcaster, listener_connector
 from app.security.passwords import HashingBusy, warm_up
 from app.security.rate_limit import LoginThrottle
 from app.tasks import housekeeping_forever
@@ -42,6 +43,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.login_throttle = LoginThrottle()  # per (client, username)
         app.state.ip_throttle = LoginThrottle(max_failures=30)  # per client, any username
         await warm_up()
+        # One dedicated LISTEN connection per worker (not from the pool); asyncpg takes a plain
+        # ``postgresql://`` DSN. It reconnects by itself, so a DB down at boot is no problem.
+        dsn = settings.database_url.set(drivername="postgresql")
+        app.state.broadcaster = Broadcaster(
+            listener_connector(dsn.render_as_string(hide_password=False)),
+            max_streams_per_client=settings.sse_max_streams_per_client,
+        )
+        await app.state.broadcaster.start()
         app.state.rejection_limiter = LoginThrottle(
             max_failures=settings.rejection_rows_per_sensor_per_minute, window_seconds=60
         )
@@ -51,6 +60,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            await app.state.broadcaster.stop()  # ends every open stream first
             purge_task.cancel()
             with suppress(asyncio.CancelledError):
                 await purge_task
@@ -92,6 +102,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router, prefix="/api")
     app.include_router(series.router, prefix="/api")
     app.include_router(sensors.router, prefix="/api")
+    # Before the measurements router: "/measurements/stream" must not match "/{measurement_id}".
+    app.include_router(stream.router, prefix="/api")
     app.include_router(measurements.router, prefix="/api")
     return app
 
