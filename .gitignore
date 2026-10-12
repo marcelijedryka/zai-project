@@ -32,6 +32,9 @@ crash.log
 *.pem
 *.key
 
+# Sensor keys written by `zai-sensor seed --save-keys`
+*.keys.json
+
 # Runtime
 logs/
 *.log
