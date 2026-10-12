@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # sensor can only add this many rows per minute (the rest is still refused and logged).
     rejection_retention_days: int = Field(default=30, ge=1)
     rejection_rows_per_sensor_per_minute: int = Field(default=60, ge=1)
+    # Realtime stream (SSE): a comment line every N seconds keeps proxies from closing idle streams;
+    # the cap is per client address and per worker process.
+    sse_heartbeat_seconds: float = Field(default=15.0, gt=0)
+    sse_max_streams_per_client: int = Field(default=5, ge=1)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     error_log_file: Path | None = None
 
