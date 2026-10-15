@@ -5,15 +5,23 @@ FastAPI + PostgreSQL/TimescaleDB backend, React SPA (later), Python sensor emula
 
 [![CI](https://github.com/marcelijedryka/zai-project/actions/workflows/ci.yml/badge.svg)](https://github.com/marcelijedryka/zai-project/actions/workflows/ci.yml)
 
-Status: Phase 1 (core API) is complete and passes the official contract and validation tests
-locally. The generator, realtime updates, frontend and deployment follow.
+Status: Phase 2 is complete: the core API passes the official contract and validation tests, and the
+sensor emulator, realtime updates (SSE), Timescale aggregates and the full CI (official script,
+Schemathesis) are in place. The frontend and the deployment follow.
+
+## Sensor emulator and sample data
+
+`generator/` holds `zai-sensor`, the sensor emulator (F13) that also seeds the sample data (F11)
+through the public API: `make seed` (real Open-Meteo data, needs internet) or
+`make seed SEED_ARGS="--source synthetic"`. It sends, backfills or streams values with a sensor key
+and shows the 422 rejections. Install, every parameter and examples: [`generator/README.md`](generator/README.md).
 
 ## Layout
 
 | Path | Content |
 |------|---------|
 | `backend/` | FastAPI app, Alembic migrations, tests |
-| `generator/` | `zai-sensor` data generator (sensor emulator), Phase 2 |
+| `generator/` | `zai-sensor` data generator (sensor emulator) |
 | `frontend/` | React SPA, E2 |
 | `contract/` | Official OpenAPI contract and test script (unchanged copies) |
 | `db/` | Generated `schema.sql` |
@@ -33,7 +41,7 @@ ZAI_ADMIN_PASSWORD=... make seed  # sample data (F11) via `zai-sensor seed`: rea
 make test                         # pytest against a real TimescaleDB, coverage gate 85 %
 make lint                         # ruff + mypy (strict)
 ADMIN_PASSWORD=... make contract-test   # the official suite, stage E1
-make e2e                          # what CI runs: fresh runtime-image stack + official suite (E1 + E2)
+make e2e                          # what CI runs: fresh runtime-image stack, official suite (E1 + E2), Schemathesis
 ```
 
 Realtime updates (Server-Sent Events, public): watch new measurements arrive while a sensor runs.
@@ -82,7 +90,12 @@ contract's "past timestamps are allowed", see the deviations below.
 `make e2e` builds the production (`runtime`) image in its own compose project (`zai-e2e`, throw-away
 volume), migrates, creates an admin, seeds, runs the official script for E1 and E2 and fails on any
 `✘` (the script itself always exits 0, so `backend/scripts/check_official_output.py` parses its
-output). Port 8000 must be free: run `make down` first. The stack runs with `ENVIRONMENT=prod`.
+output). Afterwards Schemathesis fuzzes the stack against `contract/zai-api-26z.yaml` (examples,
+coverage and fuzzing phases, admin Bearer + sensor key; logout and password change are excluded
+because they would end the session or change the password). Two findings are accepted in
+`scripts/schemathesis-baseline.json`: they are deliberate extensions beyond the contract (409 for a
+duplicate series name, 429 for login brute force); any other finding fails the run. Port 8000 must
+be free: run `make down` first. The stack runs with `ENVIRONMENT=prod`.
 `--allow-deployment-only` is for these local runs only: the pre-submission run against the
 deployed stack uses the plain checker and expects zero failures.
 
