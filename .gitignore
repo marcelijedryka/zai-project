@@ -45,6 +45,7 @@ logs/
 .vscode/
 
 # Test-suite output
+.schemathesis/
 raporty/
 wyniki.csv
 db/schema.sql.tmp
