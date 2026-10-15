@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "schemathesis_version": "4.28.0",
+  "entries": [
+    {
+      "id": "280e5f",
+      "operation": "POST /api/auth/login",
+      "check": "status_code_conformance",
+      "failure": "UndefinedStatusCode",
+      "signature": "429",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15"
+    },
+    {
+      "id": "ed13a3",
+      "operation": "POST /api/series",
+      "check": "status_code_conformance",
+      "failure": "UndefinedStatusCode",
+      "signature": "409",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15"
+    }
+  ]
+}
