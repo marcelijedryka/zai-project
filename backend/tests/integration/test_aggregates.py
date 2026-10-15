@@ -146,6 +146,46 @@ async def test_daily_range_starts_at_the_day_containing_from(
     assert [(r["bucket"][:10], r["count"]) for r in rows] == [("2026-03-01", 2), ("2026-03-02", 1)]
 
 
+async def test_a_daily_bucket_is_whole_at_both_ends_of_the_range(
+    client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    series_id, _ = await setup(client, auth, high=1000)
+    await put(
+        engine,
+        series_id,
+        (at(1, 23), 1),
+        (at(2, 3), 2),
+        (at(2, 8), 4),
+        (at(2, 15), 6),  # after ``to`` below, but in the same day
+        (at(2, 22), 8),
+        (at(3, 0), 100),  # the next day, starting exactly at midnight
+    )
+    # ``to`` in the middle of March 2: the last day must still carry the whole day, like the first.
+    rows = await agg(client, "?bucket=1d&from=2026-03-01T12:00:00Z&to=2026-03-02T10:30:00Z")
+    assert [(r["bucket"][:10], r["count"], r["min"], r["max"], r["avg"]) for r in rows] == [
+        ("2026-03-01", 1, 1.0, 1.0, 1.0),
+        ("2026-03-02", 4, 2.0, 8.0, 5.0),
+    ]
+    # ``to`` exactly at midnight belongs to the next bucket (the interval is closed).
+    rows = await agg(client, "?bucket=1d&to=2026-03-03T00:00:00Z")
+    assert [r["bucket"][:10] for r in rows] == ["2026-03-01", "2026-03-02", "2026-03-03"]
+    rows = await agg(client, "?bucket=1d&to=2026-03-02T23:59:59Z")
+    assert [r["bucket"][:10] for r in rows] == ["2026-03-01", "2026-03-02"]
+    # Hourly buckets are unchanged by this: ``to`` mid-hour includes that hour only.
+    rows = await agg(client, "?to=2026-03-02T08:30:00Z")
+    assert [r["bucket"][8:13] for r in rows] == ["01T23", "02T03", "02T08"]
+
+
+async def test_a_to_at_the_end_of_the_calendar_is_no_problem(
+    client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
+) -> None:
+    series_id, _ = await setup(client, auth, high=1000)
+    await put(engine, series_id, (at(1, 10), 5))
+    for bucket in ("1h", "1d"):
+        rows = await agg(client, f"?bucket={bucket}&to=9999-12-31T23:59:59Z")
+        assert [r["count"] for r in rows] == [1]
+
+
 async def test_limit_and_total_count(
     client: httpx.AsyncClient, auth: dict[str, str], engine: AsyncEngine
 ) -> None:

@@ -7,6 +7,7 @@ so readers never wait for the refresh policy. Data backfilled into the past, or 
 in the materialised part after the next policy run (every minute).
 """
 
+import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
@@ -89,7 +90,11 @@ def _statement(
     if ts_from is not None:
         stmt = stmt.where(HOURLY.c.bucket >= bucket_start(ts_from, bucket))
     if ts_to is not None:
-        stmt = stmt.where(HOURLY.c.bucket <= ts_to)
+        # Up to the end of the bucket that contains ``to``, so a daily bucket is whole at both ends
+        # (filtering the hourly rows at ``to`` itself would cut the last day short).
+        # (A ``to`` at the very end of the calendar overflows: then no upper bound is needed.)
+        with contextlib.suppress(OverflowError):
+            stmt = stmt.where(HOURLY.c.bucket < bucket_start(ts_to, bucket) + BUCKET_SIZE[bucket])
     return stmt
 
 
