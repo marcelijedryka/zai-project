@@ -35,11 +35,20 @@ HEX64 = "^[0-9a-f]{64}$"
 
 # Created by TimescaleDB itself (``<table>_<time column>_idx``), not described by our models.
 TIMESCALE_MANAGED_INDEXES = {"measurements_ts_idx"}
+# Created by migration 0004 with raw SQL (a Timescale continuous aggregate, not an ORM table). The
+# aggregate itself, and the hidden hypertable Timescale keeps its rows in, are not model objects.
+TIMESCALE_MANAGED_TABLES = {"measurements_hourly"}
+TIMESCALE_INTERNAL_SCHEMA = "_timescaledb_internal"
 
 
 def include_object(obj: object, name: str | None, type_: str, *_: object) -> bool:
     """Alembic ``include_object`` hook shared by ``alembic/env.py`` and the drift tests."""
-    return not (type_ == "index" and name in TIMESCALE_MANAGED_INDEXES)
+    managed_index = type_ == "index" and name in TIMESCALE_MANAGED_INDEXES
+    managed_table = type_ == "table" and (
+        name in TIMESCALE_MANAGED_TABLES
+        or getattr(obj, "schema", None) == TIMESCALE_INTERNAL_SCHEMA
+    )
+    return not (managed_index or managed_table)
 
 
 class Base(DeclarativeBase):

@@ -129,5 +129,34 @@ CREATE INDEX ix_measurement_rejections_created_at ON measurement_rejections (cre
 
 UPDATE alembic_version SET version_num='0003' WHERE alembic_version.version_num = '0002';
 
+-- Running upgrade 0003 -> 0004
+
+COMMIT;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS measurements_hourly
+            WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+            SELECT
+                series_id,
+                time_bucket('1 hour', ts) AS bucket,
+                count(*) AS sample_count,
+                sum(value) AS value_sum,
+                min(value) AS value_min,
+                max(value) AS value_max
+            FROM measurements
+            GROUP BY series_id, time_bucket('1 hour', ts)
+            WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy(
+                'measurements_hourly',
+                start_offset => NULL,
+                end_offset => INTERVAL '1 hour',
+                schedule_interval => INTERVAL '1 minute',
+                if_not_exists => true
+            );
+
+BEGIN;
+
+UPDATE alembic_version SET version_num='0004' WHERE alembic_version.version_num = '0003';
+
 COMMIT;
 

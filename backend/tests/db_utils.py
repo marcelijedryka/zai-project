@@ -6,6 +6,7 @@ event loop running (sync fixtures, async tests, any pytest-asyncio loop scope).
 """
 
 import asyncio
+import io
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
@@ -44,6 +45,15 @@ def migrate(settings: Settings, target: str = "head") -> None:
 @off_event_loop
 def downgrade(settings: Settings, target: str = "base") -> None:
     command.downgrade(alembic_config(settings), target)
+
+
+@off_event_loop
+def upgrade_sql(settings: Settings) -> str:
+    """The offline script (``alembic upgrade head --sql``), as ``make schema-sql`` writes it."""
+    config = alembic_config(settings)
+    config.output_buffer = io.StringIO()
+    command.upgrade(config, "head", sql=True)
+    return config.output_buffer.getvalue()
 
 
 async def _admin_execute(settings: Settings, *statements: str) -> None:

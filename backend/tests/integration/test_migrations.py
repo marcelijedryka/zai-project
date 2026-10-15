@@ -11,7 +11,7 @@ from sqlalchemy.pool import NullPool
 
 from app.config import Settings
 from app.models import TIMESCALE_MANAGED_INDEXES, Base, include_object
-from tests.db_utils import downgrade, migrate
+from tests.db_utils import downgrade, migrate, upgrade_sql
 
 EXPECTED_TABLES = {
     "users",
@@ -104,3 +104,82 @@ async def test_constraints_and_indexes_match_models(
     from_models = await _definitions(models_db)
     from_migrations = await _definitions(test_settings)
     assert from_migrations == from_models
+
+
+# --- migration 0004: the hourly continuous aggregate ---------------------------------------------
+
+
+async def _query(settings: Settings, sql: str) -> list[tuple[Any, ...]]:
+    engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text(sql))).all()
+    await engine.dispose()
+    return [tuple(r) for r in rows]
+
+
+CAGG = (
+    "SELECT hypertable_name, materialized_only "
+    "FROM timescaledb_information.continuous_aggregates WHERE view_name = 'measurements_hourly'"
+)
+POLICY = (
+    "SELECT schedule_interval::text, config->>'start_offset', config->>'end_offset' "
+    "FROM timescaledb_information.jobs WHERE proc_name = 'policy_refresh_continuous_aggregate'"
+)
+
+
+async def test_the_hourly_aggregate_is_real_time_with_a_refresh_policy(
+    test_settings: Settings,
+) -> None:
+    assert await _query(test_settings, CAGG) == [("measurements", False)]
+    # Every minute, over the whole history (backfilled data) up to one hour ago.
+    assert await _query(test_settings, POLICY) == [("00:01:00", None, "01:00:00")]
+    columns = await _query(
+        test_settings,
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'measurements_hourly' ORDER BY ordinal_position",
+    )
+    assert [c[0] for c in columns] == [
+        "series_id", "bucket", "sample_count", "value_sum", "value_min", "value_max",
+    ]  # fmt: skip
+
+
+async def test_downgrading_0004_removes_the_aggregate_its_policy_and_storage(
+    migrations_db: Settings,
+) -> None:
+    migrate(migrations_db)
+    assert await _query(migrations_db, CAGG)
+    downgrade(migrations_db, "0003")
+    assert await _query(migrations_db, CAGG) == []
+    assert await _query(migrations_db, POLICY) == []
+    assert (
+        await _query(migrations_db, "SELECT 1 FROM pg_class WHERE relname = 'measurements_hourly'")
+        == []
+    )
+    internal = await _query(
+        migrations_db,
+        "SELECT 1 FROM pg_tables WHERE tablename LIKE '_materialized_hypertable_%'",
+    )
+    assert internal == []  # the hidden storage hypertable went with it
+    migrate(migrations_db)
+    assert await _query(migrations_db, CAGG) == [("measurements", False)]
+
+
+async def test_the_offline_script_steps_out_of_the_transaction_for_the_aggregate(
+    migrations_db: Settings,
+) -> None:
+    """``make schema-sql`` (``alembic upgrade head --sql``) must still produce a valid script."""
+    script = upgrade_sql(migrations_db)
+    create = script.index("CREATE MATERIALIZED VIEW IF NOT EXISTS measurements_hourly")
+    assert script.rindex("COMMIT;", 0, create) > script.index("-- Running upgrade 0003 -> 0004")
+    policy = script.index("add_continuous_aggregate_policy")
+    assert "BEGIN;" in script[policy:]  # the transaction resumes for the version bookkeeping
+    assert "timescaledb.materialized_only = false" in script
+
+
+def test_the_aggregate_and_its_hidden_storage_are_not_model_objects() -> None:
+    class Hidden:
+        schema = "_timescaledb_internal"
+
+    assert not include_object(None, "measurements_hourly", "table")
+    assert not include_object(Hidden(), "_materialized_hypertable_2", "table")
+    assert include_object(None, "measurements", "table")
