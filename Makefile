@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 COMPOSE := docker compose
 
-.PHONY: dev down test test-generator lint fmt migrate schema-sql seed contract-test create-admin e2e
+.PHONY: dev down test test-generator lint fmt migrate schema-sql seed contract-test create-admin e2e refresh-aggregates
 
 .env:
 	cp .env.example .env
@@ -56,3 +56,7 @@ contract-test: ## Official suite, E1 stage: ADMIN_PASSWORD=... make contract-tes
 
 e2e: ## Official suite (E1 + E2) against a fresh runtime-image stack, like CI (stop `make dev` first)
 	scripts/e2e.sh
+
+refresh-aggregates: ## Materialise the hourly aggregate now (it refreshes itself every minute)
+	$(COMPOSE) exec -T db sh -c "psql -U \"\$$POSTGRES_USER\" -d \"\$$POSTGRES_DB\" \
+		-c \"CALL refresh_continuous_aggregate('measurements_hourly', NULL, NULL)\""
