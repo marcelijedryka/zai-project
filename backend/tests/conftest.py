@@ -1,6 +1,7 @@
 import threading
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import pytest
@@ -125,18 +126,33 @@ def auth(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def server(settings: Settings, engine: AsyncEngine) -> Iterator[str]:
-    """The API on 127.0.0.1:<free port>, for clients that need real HTTP (the generator).
+def server_options() -> dict[str, Any]:
+    """Settings overrides for the ``server`` fixture; a test module can redefine this."""
+    return {}
+
+
+@pytest.fixture
+def server_app(settings: Settings, engine: AsyncEngine, server_options: dict[str, Any]) -> FastAPI:
+    return create_app(settings.model_copy(update=server_options))
+
+
+@pytest.fixture
+def server(server_app: FastAPI) -> Iterator[str]:
+    """The API on 127.0.0.1:<free port>, for clients that need real HTTP (the generator, streams).
 
     httpx's ASGITransport buffers whole responses, so streaming and synchronous clients need a
-    real server; it runs in a background thread. ``engine`` truncates the tables afterwards.
+    real server; it runs in a background thread and is ready once the realtime listener is
+    connected. ``engine`` truncates the tables afterwards. ``server_app.state.uvicorn_server``
+    is the uvicorn instance (for shutdown tests).
     """
-    config = uvicorn.Config(create_app(settings), host="127.0.0.1", port=0, log_level="warning")
+    config = uvicorn.Config(server_app, host="127.0.0.1", port=0, log_level="warning")
     instance = uvicorn.Server(config)
+    server_app.state.uvicorn_server = instance
     thread = threading.Thread(target=instance.run, daemon=True)
     thread.start()
     for _ in range(200):
-        if instance.started and instance.servers:
+        broadcaster = getattr(server_app.state, "broadcaster", None)
+        if instance.started and instance.servers and broadcaster and broadcaster.is_connected:
             break
         threading.Event().wait(0.05)
     else:
