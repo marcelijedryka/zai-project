@@ -20,6 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.core.logging import redact, request_id_var
 from app.core.paths import DOCS_PATH, STREAM_PATH
 from app.core.problems import problem_response
+from app.security.tokens import COOKIE_NAME
 
 access_logger = logging.getLogger("zai.access")
 error_logger = logging.getLogger("zai.errors")
@@ -153,6 +154,12 @@ class SecurityHeadersMiddleware:
             await self.app(scope, receive, send)
             return
         path: str = scope["path"]
+        request_headers = Headers(scope=scope)
+        # A request that carries credentials gets answers meant for that user only (admin data,
+        # the one-time sensor key): keep them out of shared caches (proxies, shared browsers).
+        credentialed = "authorization" in request_headers or COOKIE_NAME in request_headers.get(
+            "cookie", ""
+        )
 
         async def send_with_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
@@ -163,6 +170,8 @@ class SecurityHeadersMiddleware:
                     headers.setdefault("Content-Security-Policy", API_CSP)
                 if path.startswith("/api/auth/"):
                     headers["Cache-Control"] = "no-store"
+                elif credentialed:
+                    headers.setdefault("Cache-Control", "no-store")  # e.g. the stream says no-cache
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

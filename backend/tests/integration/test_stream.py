@@ -142,6 +142,16 @@ async def test_the_response_headers_suit_a_proxied_event_stream(world: World) ->
         assert response.headers["x-content-type-options"] == "nosniff"
 
 
+async def test_a_credentialed_stream_request_keeps_the_stream_cache_header(world: World) -> None:
+    async with (
+        httpx.AsyncClient(base_url=world.url) as client,
+        client.stream(
+            "GET", STREAM, headers={"Accept": "text/event-stream", **world.headers}
+        ) as response,
+    ):
+        assert response.headers["cache-control"] == "no-cache"  # not overwritten by no-store
+
+
 async def test_the_series_filter_only_lets_those_series_through(world: World) -> None:
     a, b = world.series
     async with (

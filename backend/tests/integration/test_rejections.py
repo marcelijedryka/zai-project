@@ -199,3 +199,46 @@ async def test_rows_created_in_the_same_instant_are_ordered_by_id(
         )
     values = [i["value"] for i in (await get(client, auth)).json()]
     assert values == [5.0, 4.0, 3.0, 2.0, 1.0]
+
+
+# --- caching of credentialed responses -----------------------------------------------------------
+
+
+async def test_admin_responses_are_never_cacheable(
+    client: httpx.AsyncClient, auth: dict[str, str], token: str
+) -> None:
+    cookie = {"Cookie": f"__Host-zai_session={token}"}
+    created = await client.post(
+        "/api/series",
+        json={"name": "Cache", "minValue": 0, "maxValue": 1, "color": "#112233"},
+        headers=auth,
+    )
+    registered = await client.post(
+        "/api/sensors", json={"name": "s", "seriesId": created.json()["id"]}, headers=auth
+    )
+    assert "apiKey" in registered.json()  # the one-time key must not be stored anywhere
+    responses = [
+        registered,
+        await get(client, auth),  # rejections, Bearer
+        await client.get("/api/rejections", headers=cookie),  # rejections, session cookie
+        await client.get("/api/sensors", headers=auth),
+        await client.get(f"/api/sensors/{registered.json()['id']}", headers=auth),
+        await client.get("/api/rejections"),  # the 401 for a request without credentials
+        await client.get("/api/rejections", headers={"Authorization": "Bearer forged"}),
+    ]
+    assert [r.headers.get("cache-control") for r in responses] == [
+        "no-store",
+        "no-store",
+        "no-store",
+        "no-store",
+        "no-store",
+        None,  # nothing credentialed was sent, nothing to protect (and it is an error response)
+        "no-store",
+    ]
+
+
+async def test_public_reads_stay_cacheable_unless_credentials_were_sent(
+    client: httpx.AsyncClient, auth: dict[str, str]
+) -> None:
+    assert "cache-control" not in (await client.get("/api/series")).headers
+    assert (await client.get("/api/series", headers=auth)).headers["cache-control"] == "no-store"
