@@ -27,10 +27,13 @@ services:
     environment:
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
+      # F4 error log: WARNING+ JSON lines, readable on the host with `tail -f logs/errors.log`.
+      ERROR_LOG_FILE: /var/log/zai/errors.log
     ports:
       - "127.0.0.1:8000:8000" # dev only: not reachable from the network
     volumes:
       - ./backend:/app
+      - ./logs:/var/log/zai # gitignored; `make dev` creates it
     depends_on:
       db:
         condition: service_healthy

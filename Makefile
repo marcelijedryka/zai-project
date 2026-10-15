@@ -8,6 +8,8 @@ COMPOSE := docker compose
 	@echo "Created .env from .env.example - set a real POSTGRES_PASSWORD before use."
 
 dev: .env ## Start db + api (reload) in the background
+	@# ./logs is mounted at /var/log/zai (the F4 error log); the container user must be able to write.
+	mkdir -p logs && chmod 777 logs
 	$(COMPOSE) up -d --build --wait
 
 down: ## Stop everything (keeps the data volume)
