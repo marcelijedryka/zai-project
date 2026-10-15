@@ -9,6 +9,8 @@ COMPOSE := docker compose
 
 dev: .env ## Start db + api (reload) in the background
 	@# ./logs is mounted at /var/log/zai (the F4 error log); the container user must be able to write.
+	@# TEMPORARY dev shortcut (Linux hosts): must go before the project leaves dev - prod uses a chown'd
+	@# directory, or run the dev service as the host user (user: DEV_UID:DEV_GID). Tracked in PROGRESS.md.
 	mkdir -p logs && chmod 777 logs
 	$(COMPOSE) up -d --build --wait
 
