@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api import auth, health, measurements, rejections, sensors, series, stream
+from app.api import aggregate, auth, health, measurements, rejections, sensors, series, stream
 from app.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.core.middleware import (
@@ -103,8 +103,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(series.router, prefix="/api")
     app.include_router(sensors.router, prefix="/api")
     app.include_router(rejections.router, prefix="/api")
-    # Before the measurements router: "/measurements/stream" must not match "/{measurement_id}".
+    # Before the measurements router: "/measurements/stream" and ".../aggregate" must not match
+    # "/{measurement_id}".
     app.include_router(stream.router, prefix="/api")
+    app.include_router(aggregate.router, prefix="/api")
     app.include_router(measurements.router, prefix="/api")
     return app
 

@@ -56,6 +56,12 @@ tail -f logs/errors.log                                   # JSON lines (compose 
 zai-sensor --api-url http://localhost:8000 send --value 999   # provoke one (needs a sensor key)
 ```
 
+Aggregates (Timescale): `GET /api/measurements/aggregate?series=1,2&from=&to=&bucket=1h|1d` (public)
+returns `avg/min/max/count` per series and UTC bucket from the `measurements_hourly` continuous
+aggregate (daily buckets roll the hourly ones up exactly). It is a real-time aggregate and refreshes
+itself every minute: freshly written rows show up at once, rows backfilled into the past within a
+minute (`make refresh-aggregates` does it right now).
+
 Interactive API docs (dev only): <http://localhost:8000/api/docs>.
 
 The official test script also runs directly:

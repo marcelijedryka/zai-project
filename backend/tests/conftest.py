@@ -75,6 +75,16 @@ async def engine(settings: Settings) -> AsyncIterator[AsyncEngine]:
     yield engine
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {TABLES} RESTART IDENTITY CASCADE"))
+    # TRUNCATE does not touch the continuous aggregate (rows would resurface once the restarted
+    # ids are reused): a forced refresh over the now empty table clears the materialised hours.
+    async with engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.execute(
+            text(
+                "CALL refresh_continuous_aggregate("
+                "'measurements_hourly', NULL, NULL, force => true)"
+            )
+        )
     await engine.dispose()
 
 
