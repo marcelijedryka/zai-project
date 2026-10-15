@@ -47,6 +47,15 @@ Events: `measurement` (the same JSON as `GET /api/measurements/{id}`), `series-c
 (`{"id", "action"}`), and a `: ping` comment every 15 s. Events are not replayed after a reconnect:
 refetch the range you display. At most 5 streams per client address (429 above).
 
+Rejected measurements (F4): every refusal is a `measurement.rejected` WARNING line in the error log
+and a row behind `GET /api/rejections?limit=100` (admin only, newest first, at most 1000). In dev the
+log is a file on the host:
+
+```bash
+tail -f logs/errors.log                                   # JSON lines (compose mounts ./logs)
+zai-sensor --api-url http://localhost:8000 send --value 999   # provoke one (needs a sensor key)
+```
+
 Interactive API docs (dev only): <http://localhost:8000/api/docs>.
 
 The official test script also runs directly:
